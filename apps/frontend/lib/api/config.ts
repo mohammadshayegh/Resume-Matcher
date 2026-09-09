@@ -10,7 +10,10 @@ export type LLMProvider =
   | 'gemini'
   | 'deepseek'
   | 'groq'
-  | 'ollama';
+  | 'ollama'
+  // Codex CLI: a local subprocess, not an HTTP endpoint. It holds its own
+  // credentials in CODEX_HOME, so it uses no api_key / api_base.
+  | 'codex';
 
 // Reasoning-effort levels supported by LiteLLM. `null` (or absent) means
 // "do not send the parameter" — the default for max compatibility.
@@ -148,6 +151,76 @@ export async function fetchSystemStatus(): Promise<SystemStatus> {
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// AI usage / quota
+//
+// Read-only counterpart to the LLM config: this deployment's provider and model
+// are set server-side, so the Settings page reports consumption and remaining
+// allowance instead of offering a provider choice.
+// ---------------------------------------------------------------------------
+
+export interface TokenUsage {
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+}
+
+export interface QuotaWindow {
+  used_percent: number;
+  remaining_percent: number;
+  window_minutes: number | null;
+  /** Unix seconds at which the window rolls over. */
+  resets_at: number | null;
+}
+
+export interface QuotaCredits {
+  has_credits?: boolean;
+  unlimited?: boolean;
+  balance?: string;
+}
+
+export interface QuotaSnapshot {
+  plan_type: string | null;
+  primary: QuotaWindow | null;
+  secondary: QuotaWindow | null;
+  credits: QuotaCredits | null;
+  rate_limit_reached: boolean;
+  /** Unix seconds when the provider last reported this snapshot. */
+  source_updated_at: number | null;
+  context_window: number | null;
+  thread_total_tokens: number | null;
+}
+
+export interface AiUsage {
+  provider: string;
+  model: string;
+  reasoning_effort: ReasoningEffort | null;
+  is_cli_provider: boolean;
+  cli_available: boolean | null;
+  cli_authenticated: boolean | null;
+  cli_version: string | null;
+  /** Calls made by the backend worker since it started; resets on restart. */
+  calls: number;
+  last_usage: TokenUsage | null;
+  session_totals: TokenUsage | null;
+  /** Null when the provider exposes no allowance information. */
+  quota: QuotaSnapshot | null;
+}
+
+// Fetch the active AI backend's consumption and remaining quota
+export async function fetchAiUsage(): Promise<AiUsage> {
+  const res = await apiFetch('/config/ai-usage', { credentials: 'include' });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load AI usage (status ${res.status}).`);
+  }
+
+  return res.json();
+}
+
 // Provider display names and default models
 export const PROVIDER_INFO: Record<
   LLMProvider,
@@ -203,6 +276,9 @@ export const PROVIDER_INFO: Record<
     requiresKey: false,
     defaultBaseUrl: 'http://localhost:11434',
   },
+  // Codex authenticates through `codex login` on the server, so there is no
+  // key or endpoint for the app to hold.
+  codex: { name: 'Codex CLI', defaultModel: 'gpt-5.6-luna', requiresKey: false },
 };
 
 // Feature configuration types

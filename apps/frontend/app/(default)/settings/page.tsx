@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {
   fetchLlmConfig,
-  updateLlmConfig,
   testLlmConnection,
+  fetchAiUsage,
   fetchFeatureConfig,
   updateFeatureConfig,
   fetchPromptConfig,
@@ -17,31 +17,25 @@ import {
   fetchFeaturePrompts,
   updateFeaturePrompts,
   FeaturePromptsError,
-  fetchApiKeyStatus,
-  updateApiKeys,
-  deleteApiKey,
-  llmProviderToKeyProvider,
-  API_KEY_PROVIDER_INFO,
-  type LLMConfigUpdate,
+  type AiUsage,
   type LLMProvider,
   type LLMHealthCheck,
   type PromptOption,
+  type QuotaWindow,
   type ReasoningEffort,
   type FeaturePromptsUpdate,
-  type ApiKeyProviderStatus,
-  type ApiKeyProvider,
 } from '@/lib/api/config';
 import { API_URL } from '@/lib/api/client';
 import { getVersionString } from '@/lib/config/version';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import { useStatusCache } from '@/lib/context/status-cache';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dropdown } from '@/components/ui/dropdown';
 import {
-  Save,
+  Cpu,
+  Gauge,
   Key,
   Database,
   Activity,
@@ -67,9 +61,13 @@ import { RESUME_DRAFT_STORAGE_PREFIX, safeStorage } from '@/lib/utils/resume-dra
 import type { SupportedLanguage } from '@/lib/api/config';
 import type { Locale } from '@/i18n/config';
 
-type Status = 'idle' | 'loading' | 'saving' | 'saved' | 'error' | 'testing';
+type Status = 'idle' | 'loading' | 'error' | 'testing';
 
-const PROVIDERS: LLMProvider[] = [
+// Providers this build can put a display name to. The active provider is set
+// server-side (a single backend instance owns it), so this is no longer a
+// selection list — it only decides whether we show a friendly name or the raw
+// identifier the backend reported.
+const KNOWN_PROVIDERS: LLMProvider[] = [
   'openai',
   'openai_compatible',
   'azure_foundry',
@@ -79,12 +77,22 @@ const PROVIDERS: LLMProvider[] = [
   'deepseek',
   'groq',
   'ollama',
+  'codex',
 ];
 
+// Shared segmented-control styling (language pickers below).
 const SEGMENTED_BUTTON_BASE =
   'border border-black font-mono transition-all duration-150 ease-out shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none disabled:cursor-not-allowed disabled:opacity-50';
 const SEGMENTED_BUTTON_ACTIVE = 'bg-blue-700 text-white border-black hover:bg-blue-800';
 const SEGMENTED_BUTTON_INACTIVE = 'bg-white text-black hover:bg-secondary';
+
+/** Format a token count compactly: 1234567 -> "1.23M", 51863 -> "51.9K". */
+const formatTokens = (value: number): string => {
+  if (!Number.isFinite(value)) return '0';
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(Math.round(value));
+};
 
 const unwrapCodeBlock = (value?: string | null): string | null => {
   if (!value) return null;
@@ -115,20 +123,22 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<Status>('loading');
   const [error, setError] = useState<string | null>(null);
 
-  // LLM Config state
+  // Active AI backend — REPORTED, not chosen. A deployment runs one backend
+  // instance whose provider/model come from server configuration (.env or
+  // config.json), so this page shows what is in use and how much of it has
+  // been consumed rather than offering a provider picker.
   const [provider, setProvider] = useState<LLMProvider>('openai');
   const [model, setModel] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [apiBase, setApiBase] = useState('');
-  const [hasStoredApiKey, setHasStoredApiKey] = useState(false);
-  // Per-provider encrypted key store status (drives the saved/empty hints and
-  // the provider key list). Keyed by key-store provider name.
-  const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyProviderStatus[]>([]);
-  // 'auto' is the UI sentinel for "do not send reasoning_effort". Maps to
-  // empty string when persisted to the backend (so gpt-5 auto-migration
-  // won't re-fire on next load). Typed tightly so invalid values can't leak
-  // through the save path.
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | 'auto'>('auto');
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
+
+  // Consumption + remaining quota for the active backend.
+  const [aiUsage, setAiUsage] = useState<AiUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  // Clock reading is captured at fetch time, not during render: reading
+  // Date.now() while rendering is impure and would also make the server and
+  // client disagree on "resets in ...".
+  const [usageFetchedAt, setUsageFetchedAt] = useState<number | null>(null);
 
   // Use cached system status (loaded on app start, refreshes every 30 min)
   const {
@@ -162,9 +172,6 @@ export default function SettingsPage() {
     field: string;
     missing: string[];
   } | null>(null);
-
-  // Per-provider key deletion confirm target (null = dialog closed).
-  const [keyToDelete, setKeyToDelete] = useState<ApiKeyProvider | null>(null);
 
   // Danger Zone state
   const [showClearApiKeysDialog, setShowClearApiKeysDialog] = useState(false);
@@ -282,34 +289,23 @@ export default function SettingsPage() {
 
     async function loadConfig() {
       try {
-        const [llmConfig, featureConfig, promptConfig, featurePrompts, keyStatus] =
-          await Promise.all([
-            fetchLlmConfig().catch(() => null),
-            fetchFeatureConfig().catch(() => null),
-            fetchPromptConfig().catch(() => null),
-            fetchFeaturePrompts().catch(() => null),
-            fetchApiKeyStatus().catch(() => null),
-          ]);
+        const [llmConfig, featureConfig, promptConfig, featurePrompts] = await Promise.all([
+          fetchLlmConfig().catch(() => null),
+          fetchFeatureConfig().catch(() => null),
+          fetchPromptConfig().catch(() => null),
+          fetchFeaturePrompts().catch(() => null),
+        ]);
 
         if (cancelled) return;
 
-        const statuses = keyStatus?.providers ?? [];
-        setApiKeyStatuses(statuses);
-
         if (llmConfig) {
           const providerFromBackend = llmConfig.provider || 'openai';
-          const safeProvider = PROVIDERS.includes(providerFromBackend as LLMProvider)
+          const safeProvider = KNOWN_PROVIDERS.includes(providerFromBackend as LLMProvider)
             ? (providerFromBackend as LLMProvider)
             : 'openai';
           setProvider(safeProvider);
           setModel(llmConfig.model || PROVIDER_INFO[safeProvider].defaultModel);
-          // Whether THIS provider already has an encrypted key (per-provider,
-          // not the legacy shared slot) drives the "leave blank to keep" hint.
-          const keyProvider = llmProviderToKeyProvider(safeProvider);
-          setHasStoredApiKey(statuses.some((s) => s.provider === keyProvider && s.configured));
-          setApiKey('');
-          setApiBase(llmConfig.api_base || '');
-          setReasoningEffort((llmConfig.reasoning_effort as ReasoningEffort | null) ?? 'auto');
+          setReasoningEffort((llmConfig.reasoning_effort as ReasoningEffort | null) ?? null);
 
           if (providerFromBackend !== safeProvider) {
             setError(t('settings.errors.unknownProvider', { provider: providerFromBackend }));
@@ -350,161 +346,49 @@ export default function SettingsPage() {
     };
   }, [t]);
 
-  // Whether a given key-store provider currently has a saved key.
-  const providerHasStoredKey = (p: LLMProvider): boolean => {
-    const keyProvider = llmProviderToKeyProvider(p);
-    return apiKeyStatuses.some((s) => s.provider === keyProvider && s.configured);
-  };
-
-  // Re-fetch the per-provider key status (after save/delete/clear).
-  const refreshApiKeyStatus = async (): Promise<ApiKeyProviderStatus[]> => {
-    const status = await fetchApiKeyStatus().catch(() => null);
-    const statuses = status?.providers ?? [];
-    setApiKeyStatuses(statuses);
-    return statuses;
-  };
-
-  // Delete one provider's saved key (per-row action).
-  const handleDeleteApiKey = async (keyProvider: ApiKeyProvider) => {
+  // Load consumption + remaining quota for the active backend.
+  //
+  // Kept separate from the mount loader above (and from the shared
+  // /status cache) because it is refreshed on its own button: token counters
+  // and quota move with every AI call, while provider/model do not.
+  const loadAiUsage = useCallback(async () => {
+    setUsageLoading(true);
+    setUsageError(null);
     try {
-      await deleteApiKey(keyProvider);
-      const statuses = await refreshApiKeyStatus();
-      if (llmProviderToKeyProvider(provider) === keyProvider) {
-        setHasStoredApiKey(false);
-      }
-      // Keep the local hint in sync even if the active provider differs.
-      void statuses;
+      setAiUsage(await fetchAiUsage());
+      setUsageFetchedAt(Date.now());
     } catch (err) {
-      console.error('Failed to delete API key', err);
-      setError((err as Error).message || t('settings.errors.unableToSaveConfiguration'));
+      console.error('Failed to load AI usage', err);
+      setAiUsage(null);
+      setUsageError(t('settings.aiBackend.usageUnavailable'));
     } finally {
-      setKeyToDelete(null);
+      setUsageLoading(false);
     }
-  };
+  }, [t]);
 
-  // Handle provider change
-  const handleProviderChange = (newProvider: LLMProvider) => {
-    const nextInfo = PROVIDER_INFO[newProvider];
-    setProvider(newProvider);
-    setModel(nextInfo.defaultModel);
+  useEffect(() => {
+    void loadAiUsage();
+  }, [loadAiUsage]);
 
-    // H-09: the Base URL field is shared across providers, so an endpoint left
-    // over from the previous one used to be persisted against the next —
-    // e.g. Azure -> Anthropic routed every Claude call at the Azure host.
-    //
-    // Reset on EVERY actual switch and seed only the destination's own default.
-    // Keying off the previous provider's flags was not enough: a base URL typed
-    // manually under a provider that declares neither (openai, anthropic, ...)
-    // survived the switch and was saved as Azure's required endpoint.
-    if (newProvider !== provider) {
-      setApiBase(nextInfo.defaultBaseUrl ?? '');
-    } else if (nextInfo.defaultBaseUrl && !apiBase.trim()) {
-      setApiBase(nextInfo.defaultBaseUrl);
-    }
-
-    // Clear the key input on switch, but drive the "has stored key" hint from
-    // the per-provider store so a saved key for the new provider is recognized
-    // (each provider keeps its own key — switching no longer wipes anything).
-    setApiKey('');
-    setHasStoredApiKey(providerHasStoredKey(newProvider));
-  };
-
-  // Save configuration
-  const handleSave = async () => {
-    setStatus('saving');
-    setError(null);
-    setHealthCheck(null);
-
-    try {
-      if (requiresApiKey && !apiKey.trim() && !hasStoredApiKey) {
-        setError(t('settings.errors.apiKeyRequired'));
-        setStatus('error');
-        return;
-      }
-      if (requiresApiBase && !apiBase.trim()) {
-        setError(t('settings.errors.baseUrlRequired', { provider: providerInfo.name }));
-        setStatus('error');
-        return;
-      }
-
-      const trimmedKey = apiKey.trim();
-
-      // (1) Persist the key to the encrypted PER-PROVIDER store (only when the
-      // user typed a new one). This is the bug fix: keys no longer ride on the
-      // shared config slot, so saving one provider never wipes another's key.
-      if (trimmedKey) {
-        const keyProvider = llmProviderToKeyProvider(provider);
-        await updateApiKeys({ [keyProvider]: trimmedKey } as Record<ApiKeyProvider, string>);
-      }
-
-      // (2) Persist non-secret LLM config — WITHOUT api_key.
-      const update: LLMConfigUpdate = {
-        provider,
-        model: model.trim(),
-        api_base: apiBase.trim() || null,
-        // Map UI sentinel 'auto' → '' so the server persists an empty string
-        // and the gpt-5 auto-migration won't re-fire.
-        reasoning_effort: reasoningEffort === 'auto' ? '' : (reasoningEffort as ReasoningEffort),
-      };
-      await updateLlmConfig(update);
-
-      // Refresh the per-provider key status + cached system status after save.
-      const statuses = await refreshApiKeyStatus();
-      setApiKey('');
-      setHasStoredApiKey(
-        statuses.some((s) => s.provider === llmProviderToKeyProvider(provider) && s.configured)
-      );
-      await refreshStatus();
-
-      setStatus('saved');
-      setTimeout(() => setStatus('idle'), 2000);
-    } catch (err) {
-      console.error('Failed to save config', err);
-      setError((err as Error).message || t('settings.errors.unableToSaveConfiguration'));
-      setStatus('error');
-    }
-  };
-
-  // Test connection with current form values (pre-save testing)
+  // Test the SAVED backend configuration.
+  //
+  // Previously this tested the form's unsaved values; there is no form any
+  // more, so an empty body tells the backend to probe whatever it is actually
+  // configured to use — which is what an operator needs to know.
   const handleTestConnection = async () => {
     setStatus('testing');
     setError(null);
     setHealthCheck(null);
 
     try {
-      if (requiresApiBase && !apiBase.trim()) {
-        setHealthCheck({
-          healthy: false,
-          provider,
-          model,
-          error: t('settings.errors.baseUrlRequired', { provider: providerInfo.name }),
-        });
-        setStatus('idle');
-        return;
-      }
-
-      // Build config from current form values
-      const testConfig: LLMConfigUpdate = {
-        provider,
-        model: model.trim() || providerInfo.defaultModel,
-        api_base: apiBase.trim() || null,
-        reasoning_effort: reasoningEffort === 'auto' ? '' : (reasoningEffort as ReasoningEffort),
-      };
-
-      // Send the user-typed key if present (for any provider, required or
-      // optional). If blank, omit the field so the backend falls back to
-      // the stored key for that provider.
-      if (apiKey.trim()) {
-        testConfig.api_key = apiKey.trim();
-      }
-
-      const result = await testLlmConnection(testConfig);
-      setHealthCheck(result);
-      setStatus('idle');
+      setHealthCheck(await testLlmConnection());
     } catch (err) {
       console.error('Failed to test connection', err);
       setHealthCheck({ healthy: false, provider, model, error: (err as Error).message });
+    } finally {
       setStatus('idle');
+      // A probe consumes tokens, so the counters just moved.
+      void loadAiUsage();
     }
   };
 
@@ -581,18 +465,14 @@ export default function SettingsPage() {
     try {
       await clearAllApiKeys();
 
-      // The encrypted store is now empty for every provider.
-      await refreshApiKeyStatus();
-      // Refetch full LLM config to ensure local state is synced with backend
+      // Refetch the reported config so the panel reflects the backend after
+      // the wipe (a key-less provider now reads as unconfigured).
       const llmConfig = await fetchLlmConfig().catch(() => null);
       if (llmConfig) {
         setProvider(llmConfig.provider || 'openai');
         setModel(llmConfig.model || PROVIDER_INFO['openai'].defaultModel);
-        setApiBase(llmConfig.api_base || '');
-        setReasoningEffort(llmConfig.reasoning_effort ?? 'auto');
+        setReasoningEffort(llmConfig.reasoning_effort ?? null);
       }
-      setApiKey('');
-      setHasStoredApiKey(false);
 
       setHealthCheck(null);
       // Refresh status
@@ -669,20 +549,59 @@ export default function SettingsPage() {
     return t('settings.systemStatus.lastFetched.hoursAgo', { hours: Math.floor(diff / 3600) });
   };
 
-  const requiresApiKey = providerInfo.requiresKey ?? true;
-  const requiresApiBase = providerInfo.requiresBaseUrl ?? false;
-  // M-04: provider-specific base-URL copy comes from the message catalogs, not
-  // English literals in PROVIDER_INFO — otherwise this whole block reverted to
-  // English inside an otherwise fully-translated settings page.
-  const baseUrlKey = providerInfo.baseUrlI18nKey;
-  const baseUrlLabel = baseUrlKey
-    ? t(`settings.llmConfiguration.${baseUrlKey}BaseUrlLabel`)
-    : t('settings.llmConfiguration.baseUrlLabel');
-  const baseUrlPlaceholder =
-    providerInfo.baseUrlPlaceholder ?? t('settings.llmConfiguration.baseUrlPlaceholder');
-  const baseUrlDescription = baseUrlKey
-    ? t(`settings.llmConfiguration.${baseUrlKey}BaseUrlDescription`)
-    : t('settings.llmConfiguration.baseUrlDescription');
+  // Format a quota window's reset time as a relative "in 2h 15m". The backend
+  // sends a unix timestamp, which is meaningless to read raw.
+  const formatResetsIn = (resetsAt: number | null): string | null => {
+    if (!resetsAt || usageFetchedAt === null) return null;
+    const seconds = resetsAt - Math.floor(usageFetchedAt / 1000);
+    if (seconds <= 0) return t('settings.aiBackend.resetsNow');
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return t('settings.aiBackend.resetsInDays', { days, hours });
+    if (hours > 0) return t('settings.aiBackend.resetsInHours', { hours, minutes });
+    return t('settings.aiBackend.resetsInMinutes', { minutes });
+  };
+
+  // Quota bars are the one place this page uses colour to encode a value, so
+  // the thresholds live here rather than being repeated per window.
+  const quotaBarColor = (remainingPercent: number): string => {
+    if (remainingPercent <= 10) return 'bg-red-600';
+    if (remainingPercent <= 25) return 'bg-amber-500';
+    return 'bg-green-700';
+  };
+
+  const renderQuotaWindow = (label: string, window: QuotaWindow | null) => {
+    if (!window) return null;
+    const resetsIn = formatResetsIn(window.resets_at);
+    return (
+      <div className="border border-black bg-white p-4 shadow-sw-sm">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="font-mono text-xs uppercase tracking-wide text-steel-grey">{label}</span>
+          <span className="font-mono text-lg font-bold">
+            {window.remaining_percent.toFixed(0)}%
+          </span>
+        </div>
+        <div
+          className="mt-2 h-2 w-full border border-black bg-paper-tint"
+          role="meter"
+          aria-label={label}
+          aria-valuenow={Math.round(window.remaining_percent)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className={`h-full ${quotaBarColor(window.remaining_percent)}`}
+            style={{ width: `${Math.max(0, Math.min(100, window.remaining_percent))}%` }}
+          />
+        </div>
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+          {t('settings.aiBackend.quotaRemaining')}
+          {resetsIn ? ` · ${resetsIn}` : ''}
+        </p>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col items-center justify-start p-6 md:p-12 min-h-screen overflow-y-auto">
@@ -891,279 +810,300 @@ export default function SettingsPage() {
             )}
           </section>
 
-          {/* LLM Configuration */}
+          {/* Active AI Backend — read-only status, consumption and quota.
+              This deployment runs a single backend whose provider/model are set
+              server-side, so there is nothing to choose here: the panel reports
+              what is configured, how much has been consumed, and how much
+              allowance is left, plus a live connection probe. */}
           <section className="space-y-6">
-            <div className="flex items-center gap-2 border-b border-black/10 pb-2">
-              <Key className="w-4 h-4" />
-              <h2 className="font-mono text-sm font-bold uppercase tracking-wider">
-                {t('settings.llmConfigurationTitle')}
-              </h2>
+            <div className="flex items-center justify-between border-b border-black/10 pb-2">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4" />
+                <h2 className="font-mono text-sm font-bold uppercase tracking-wider">
+                  {t('settings.aiBackend.title')}
+                </h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadAiUsage}
+                disabled={usageLoading}
+                className="gap-1 text-xs"
+              >
+                <RefreshCw className={`w-3 h-3 ${usageLoading ? 'animate-spin' : ''}`} />
+                {t('settings.systemStatus.refresh')}
+              </Button>
             </div>
 
-            <div className="grid gap-6">
-              {/* Provider Selection */}
-              <div className="space-y-2">
-                <Label>{t('settings.providerLabel')}</Label>
-                <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                  {PROVIDERS.map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => handleProviderChange(p)}
-                      className={`px-3 py-2 text-xs uppercase ${SEGMENTED_BUTTON_BASE} ${
-                        provider === p ? SEGMENTED_BUTTON_ACTIVE : SEGMENTED_BUTTON_INACTIVE
-                      }`}
-                    >
-                      {PROVIDER_INFO[p].name.split(' ')[0]}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-steel-grey font-mono">
-                  {t('settings.llmConfiguration.selectedProvider', {
-                    provider: providerInfo.name,
-                  })}
-                </p>
-              </div>
+            <p className="font-mono text-xs text-steel-grey">
+              {t('settings.aiBackend.serverManagedNotice')}
+            </p>
 
-              {/* Model Input */}
-              <div className="space-y-2">
-                <Label htmlFor="model">{t('settings.llmConfiguration.modelLabel')}</Label>
-                <Input
-                  id="model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={providerInfo.defaultModel}
-                  className="font-mono"
-                />
-                <p className="text-xs text-steel-grey font-mono">
-                  {t('settings.llmConfiguration.defaultModel', {
-                    model: providerInfo.defaultModel,
-                  })}
-                </p>
+            {/* Configured backend (read-only) */}
+            <dl className="border border-black bg-white shadow-sw-sm divide-y divide-black/10">
+              <div className="flex items-baseline justify-between gap-4 p-4">
+                <dt className="font-mono text-xs uppercase tracking-wide text-steel-grey">
+                  {t('settings.providerLabel')}
+                </dt>
+                <dd className="font-mono text-sm font-bold text-right break-all">
+                  {providerInfo.name}
+                </dd>
               </div>
-
-              {/* API Key Input — always enabled. For providers that don't
-                  require a key (Ollama, OpenAI-Compatible local servers), the
-                  field is marked optional so users can STILL enter a key if
-                  their deployment needs auth (e.g., a secured LM Studio or a
-                  hosted OpenAI-compatible proxy). Save-time validation only
-                  fails when `requiresApiKey` is true. */}
-              <div className="space-y-2">
-                <Label htmlFor="apiKey">
-                  {t('settings.llmConfiguration.apiKeyLabel')}{' '}
-                  {!requiresApiKey && (
-                    <span className="text-steel-grey">
-                      {t('settings.llmConfiguration.apiKeyOptional')}
+              <div className="flex items-baseline justify-between gap-4 p-4">
+                <dt className="font-mono text-xs uppercase tracking-wide text-steel-grey">
+                  {t('settings.llmConfiguration.modelLabel')}
+                </dt>
+                <dd className="font-mono text-sm font-bold text-right break-all">
+                  {model || providerInfo.defaultModel}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-4 p-4">
+                <dt className="font-mono text-xs uppercase tracking-wide text-steel-grey">
+                  {t('settings.llmConfiguration.reasoningEffortLabel')}
+                </dt>
+                <dd className="font-mono text-sm font-bold text-right">
+                  {reasoningEffort ?? t('settings.llmConfiguration.reasoningEffortAuto')}
+                </dd>
+              </div>
+              {aiUsage?.is_cli_provider && (
+                <div className="flex items-baseline justify-between gap-4 p-4">
+                  <dt className="font-mono text-xs uppercase tracking-wide text-steel-grey">
+                    {t('settings.aiBackend.cliLabel')}
+                  </dt>
+                  <dd className="flex items-center gap-2 font-mono text-sm font-bold">
+                    {aiUsage.cli_available && aiUsage.cli_authenticated ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className="text-right break-all">
+                      {!aiUsage.cli_available
+                        ? t('settings.aiBackend.cliMissing')
+                        : !aiUsage.cli_authenticated
+                          ? t('settings.aiBackend.cliNotAuthenticated')
+                          : (aiUsage.cli_version ?? t('settings.aiBackend.cliReady'))}
                     </span>
+                  </dd>
+                </div>
+              )}
+            </dl>
+
+            {/* Consumption + remaining quota */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Gauge className="w-4 h-4 text-steel-grey" />
+                <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-ink-soft">
+                  {t('settings.aiBackend.consumptionTitle')}
+                </h3>
+              </div>
+
+              {usageLoading && !aiUsage ? (
+                <div className="flex items-center justify-center p-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-steel-grey" />
+                </div>
+              ) : usageError ? (
+                <div className="border border-dashed border-red-300 bg-red-50 p-4">
+                  <p className="font-mono text-xs text-red-600">{usageError}</p>
+                </div>
+              ) : (
+                <>
+                  <div className="@container">
+                    <div className="grid grid-cols-2 @3xl:grid-cols-4 gap-4">
+                      <div className="border border-black bg-white p-4 shadow-sw-sm">
+                        <span className="font-mono text-xs uppercase text-steel-grey">
+                          {t('settings.aiBackend.callsLabel')}
+                        </span>
+                        <p className="font-mono text-2xl font-bold">{aiUsage?.calls ?? 0}</p>
+                      </div>
+                      <div className="border border-black bg-white p-4 shadow-sw-sm">
+                        <span className="font-mono text-xs uppercase text-steel-grey">
+                          {t('settings.aiBackend.tokensTotalLabel')}
+                        </span>
+                        <p className="font-mono text-2xl font-bold">
+                          {formatTokens(aiUsage?.session_totals?.total_tokens ?? 0)}
+                        </p>
+                      </div>
+                      <div className="border border-black bg-white p-4 shadow-sw-sm">
+                        <span className="font-mono text-xs uppercase text-steel-grey">
+                          {t('settings.aiBackend.tokensInLabel')}
+                        </span>
+                        <p className="font-mono text-2xl font-bold">
+                          {formatTokens(aiUsage?.session_totals?.input_tokens ?? 0)}
+                        </p>
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft mt-1">
+                          {t('settings.aiBackend.cachedTokens', {
+                            tokens: formatTokens(aiUsage?.session_totals?.cached_input_tokens ?? 0),
+                          })}
+                        </p>
+                      </div>
+                      <div className="border border-black bg-white p-4 shadow-sw-sm">
+                        <span className="font-mono text-xs uppercase text-steel-grey">
+                          {t('settings.aiBackend.tokensOutLabel')}
+                        </span>
+                        <p className="font-mono text-2xl font-bold">
+                          {formatTokens(aiUsage?.session_totals?.output_tokens ?? 0)}
+                        </p>
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft mt-1">
+                          {t('settings.aiBackend.reasoningTokens', {
+                            tokens: formatTokens(
+                              aiUsage?.session_totals?.reasoning_output_tokens ?? 0
+                            ),
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Counters are per backend worker and reset when it
+                      restarts — say so rather than implying a billing total. */}
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                    {t('settings.aiBackend.countersScopeNote')}
+                    {aiUsage?.last_usage
+                      ? ` · ${t('settings.aiBackend.lastCall', {
+                          tokens: formatTokens(aiUsage.last_usage.total_tokens),
+                        })}`
+                      : ''}
+                  </p>
+
+                  {aiUsage?.quota ? (
+                    <div className="space-y-4">
+                      {aiUsage.quota.rate_limit_reached && (
+                        <div className="border-2 border-red-500 bg-red-50 p-3 shadow-sw-default">
+                          <p className="font-mono text-xs font-bold uppercase text-red-700">
+                            {t('settings.aiBackend.quotaExhausted')}
+                          </p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {renderQuotaWindow(
+                          t('settings.aiBackend.quotaPrimary'),
+                          aiUsage.quota.primary
+                        )}
+                        {renderQuotaWindow(
+                          t('settings.aiBackend.quotaSecondary'),
+                          aiUsage.quota.secondary
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                        {aiUsage.quota.plan_type && (
+                          <span>
+                            {t('settings.aiBackend.planLabel', { plan: aiUsage.quota.plan_type })}
+                          </span>
+                        )}
+                        {aiUsage.quota.context_window && (
+                          <span>
+                            {t('settings.aiBackend.contextWindowLabel', {
+                              tokens: formatTokens(aiUsage.quota.context_window),
+                            })}
+                          </span>
+                        )}
+                        {aiUsage.quota.credits?.balance && (
+                          <span>
+                            {t('settings.aiBackend.creditsLabel', {
+                              balance: aiUsage.quota.credits.balance,
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="font-mono text-xs text-steel-grey">
+                      {t('settings.aiBackend.quotaUnsupported')}
+                    </p>
                   )}
-                </Label>
-                <Input
-                  id="apiKey"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={
-                    requiresApiKey
-                      ? t('settings.llmConfiguration.apiKeyPlaceholder')
-                      : t('settings.llmConfiguration.apiKeyOptionalPlaceholder')
-                  }
-                  className="font-mono"
-                />
-                {hasStoredApiKey && !apiKey && (
-                  <p className="text-xs text-steel-grey font-mono">
-                    {t('settings.llmConfiguration.leaveBlankToKeepExistingKey')}
+                </>
+              )}
+            </div>
+
+            {/* Live connection probe against the configured backend */}
+            <div>
+              <Button
+                variant="outline"
+                onClick={handleTestConnection}
+                disabled={status === 'testing'}
+              >
+                {status === 'testing' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Activity className="w-4 h-4" />
+                    {t('settings.llmConfiguration.testConnection')}
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="border border-red-300 bg-red-50 p-3">
+                <p className="text-xs text-red-600 font-mono break-words">
+                  {t('settings.llmConfiguration.errorPrefix', { error })}
+                </p>
+              </div>
+            )}
+
+            {/* Health Check Result */}
+            {healthCheck && (
+              <div
+                className={`border p-4 break-words ${
+                  healthCheck.healthy ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  {healthCheck.healthy ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <XCircle className="w-5 h-5 text-red-500" />
+                  )}
+                  <span className="font-mono text-sm font-bold">
+                    {healthCheck.healthy
+                      ? t('settings.llmConfiguration.connectionSuccessful')
+                      : t('settings.llmConfiguration.connectionFailed')}
+                  </span>
+                </div>
+                <p className="font-mono text-xs text-ink-soft">
+                  {t('settings.llmConfiguration.connectionDetails', {
+                    provider: healthCheck.provider,
+                    model: healthCheck.model,
+                  })}
+                </p>
+                {healthCheckError && (
+                  <p className="font-mono text-xs text-red-600 mt-1 break-words">
+                    {healthCheckError}
                   </p>
                 )}
-              </div>
-
-              {/* Saved per-provider keys — each provider keeps its own encrypted
-                  key, so switching providers never wipes another's. */}
-              {apiKeyStatuses.some((s) => s.configured) && (
-                <div className="space-y-2 border border-black bg-paper-tint p-3 shadow-sw-xs">
-                  <p className="font-mono text-xs uppercase tracking-wide text-ink-soft">
-                    {t('settings.apiKeys.savedTitle')}
+                {healthCheckWarning && (
+                  <p className="font-mono text-xs text-amber-700 mt-1 break-words">
+                    {healthCheckWarning}
                   </p>
-                  <ul className="space-y-1.5">
-                    {apiKeyStatuses
-                      .filter((s) => s.configured)
-                      .map((s) => (
-                        <li
-                          key={s.provider}
-                          className="flex items-center justify-between gap-2 text-sm"
-                        >
-                          <span className="flex items-center gap-2">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-success" />
-                            <span className="font-medium">
-                              {API_KEY_PROVIDER_INFO[s.provider]?.name ?? s.provider}
-                            </span>
-                            <span className="font-mono text-xs text-steel-grey">
-                              {s.masked_key}
-                            </span>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setKeyToDelete(s.provider)}
-                            className="font-mono text-xs uppercase text-destructive hover:underline"
-                            aria-label={t('settings.apiKeys.deleteAria', {
-                              provider: API_KEY_PROVIDER_INFO[s.provider]?.name ?? s.provider,
-                            })}
-                          >
-                            {t('common.delete')}
-                          </button>
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* API Base URL (optional, for proxies/aggregators/custom endpoints) */}
-              <div className="space-y-2">
-                <Label htmlFor="apiBase">
-                  {baseUrlLabel} {requiresApiBase && <span className="text-destructive">*</span>}
-                </Label>
-                <Input
-                  id="apiBase"
-                  value={apiBase}
-                  onChange={(e) => setApiBase(e.target.value)}
-                  placeholder={baseUrlPlaceholder}
-                  className="font-mono"
-                />
-                <p className="text-xs text-steel-grey font-mono">{baseUrlDescription}</p>
-              </div>
-
-              {/* Reasoning Effort (optional, only applies to reasoning-capable models) */}
-              <div className="space-y-2">
-                <Dropdown
-                  label={t('settings.llmConfiguration.reasoningEffortLabel')}
-                  value={reasoningEffort}
-                  onChange={(value) => setReasoningEffort(value as ReasoningEffort | 'auto')}
-                  options={[
-                    {
-                      id: 'auto',
-                      label: t('settings.llmConfiguration.reasoningEffortAuto'),
-                      description: t('settings.llmConfiguration.reasoningEffortAutoDesc'),
-                    },
-                    { id: 'minimal', label: t('settings.llmConfiguration.reasoningEffortMinimal') },
-                    { id: 'low', label: t('settings.llmConfiguration.reasoningEffortLow') },
-                    { id: 'medium', label: t('settings.llmConfiguration.reasoningEffortMedium') },
-                    { id: 'high', label: t('settings.llmConfiguration.reasoningEffortHigh') },
-                  ]}
-                />
-                <p className="text-xs text-steel-grey font-mono">
-                  {t('settings.llmConfiguration.reasoningEffortDescription')}
-                </p>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-4">
-                <Button
-                  onClick={handleSave}
-                  disabled={status === 'saving' || status === 'loading'}
-                  className="flex-1"
-                >
-                  {status === 'saving' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : status === 'saved' ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      {t('common.success')}
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      {t('common.save')}
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={status === 'testing' || status === 'saving'}
-                >
-                  {status === 'testing' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      <Activity className="w-4 h-4" />
-                      {t('settings.llmConfiguration.testConnection')}
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {/* Error Message */}
-              {error && (
-                <div className="border border-red-300 bg-red-50 p-3">
-                  <p className="text-xs text-red-600 font-mono break-words">
-                    {t('settings.llmConfiguration.errorPrefix', { error })}
-                  </p>
-                </div>
-              )}
-
-              {/* Health Check Result */}
-              {healthCheck && (
-                <div
-                  className={`border p-4 break-words ${
-                    healthCheck.healthy
-                      ? 'border-green-300 bg-green-50'
-                      : 'border-red-300 bg-red-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-2">
-                    {healthCheck.healthy ? (
-                      <CheckCircle2 className="w-5 h-5 text-green-600" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-500" />
+                )}
+                {healthDetailItems.length > 0 && (
+                  <div className="mt-3 space-y-3">
+                    {healthDetailItems.map((item) =>
+                      item.key === 'reasoningContent' ? (
+                        <details key={item.key} className="group">
+                          <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-black">
+                            {item.label}
+                          </summary>
+                          <pre className="mt-1 whitespace-pre-wrap break-words rounded-none border border-black bg-white p-3 text-xs text-ink-soft shadow-sw-sm">
+                            {item.value}
+                          </pre>
+                        </details>
+                      ) : (
+                        <div key={item.key}>
+                          <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                            {item.label}
+                          </p>
+                          <pre className="mt-1 whitespace-pre-wrap break-words rounded-none border border-black bg-white p-3 text-xs text-ink-soft shadow-sw-sm">
+                            {item.value}
+                          </pre>
+                        </div>
+                      )
                     )}
-                    <span className="font-mono text-sm font-bold">
-                      {healthCheck.healthy
-                        ? t('settings.llmConfiguration.connectionSuccessful')
-                        : t('settings.llmConfiguration.connectionFailed')}
-                    </span>
                   </div>
-                  <p className="font-mono text-xs text-ink-soft">
-                    {t('settings.llmConfiguration.connectionDetails', {
-                      provider: healthCheck.provider,
-                      model: healthCheck.model,
-                    })}
-                  </p>
-                  {healthCheckError && (
-                    <p className="font-mono text-xs text-red-600 mt-1 break-words">
-                      {healthCheckError}
-                    </p>
-                  )}
-                  {healthCheckWarning && (
-                    <p className="font-mono text-xs text-amber-700 mt-1 break-words">
-                      {healthCheckWarning}
-                    </p>
-                  )}
-                  {healthDetailItems.length > 0 && (
-                    <div className="mt-3 space-y-3">
-                      {healthDetailItems.map((item) =>
-                        item.key === 'reasoningContent' ? (
-                          <details key={item.key} className="group">
-                            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-black">
-                              {item.label}
-                            </summary>
-                            <pre className="mt-1 whitespace-pre-wrap break-words rounded-none border border-black bg-white p-3 text-xs text-ink-soft shadow-sw-sm">
-                              {item.value}
-                            </pre>
-                          </details>
-                        ) : (
-                          <div key={item.key}>
-                            <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
-                              {item.label}
-                            </p>
-                            <pre className="mt-1 whitespace-pre-wrap break-words rounded-none border border-black bg-white p-3 text-xs text-ink-soft shadow-sw-sm">
-                              {item.value}
-                            </pre>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* Content Generation Section */}
@@ -1476,22 +1416,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      <ConfirmDialog
-        open={keyToDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setKeyToDelete(null);
-        }}
-        title={t('settings.apiKeys.deleteConfirmTitle')}
-        description={t('settings.apiKeys.deleteConfirmDescription', {
-          provider: keyToDelete ? (API_KEY_PROVIDER_INFO[keyToDelete]?.name ?? keyToDelete) : '',
-        })}
-        confirmLabel={t('common.delete')}
-        variant="warning"
-        onConfirm={() => {
-          if (keyToDelete) void handleDeleteApiKey(keyToDelete);
-        }}
-      />
 
       <ConfirmDialog
         open={showClearApiKeysDialog}

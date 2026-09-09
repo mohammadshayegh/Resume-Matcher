@@ -32,6 +32,7 @@ def _needs_key() -> None:
 
 async def generate_tailoring(case: dict[str, Any]) -> dict[str, Any]:
     """Drive the real preview endpoint using the test-owned database."""
+    from app.auth import AuthUser, LOCAL_USER_ID
     from app.database import db
     from app.routers.resumes import improve_resume_preview_endpoint
     from app.schemas import ImproveResumeRequest, ResumeData
@@ -45,8 +46,12 @@ async def generate_tailoring(case: dict[str, Any]) -> dict[str, Any]:
         is_master=True,
     )
     job = await db.create_job(case["job_description"], resume["resume_id"])
+    # Called directly, so FastAPI never resolves the handler's
+    # Depends(get_current_writer). The rows above were created under the
+    # default local user, so the caller must be that same user.
     response = await improve_resume_preview_endpoint(
-        ImproveResumeRequest(resume_id=resume["resume_id"], job_id=job["job_id"])
+        ImproveResumeRequest(resume_id=resume["resume_id"], job_id=job["job_id"]),
+        user=AuthUser(id=LOCAL_USER_ID),
     )
     return response.data.resume_preview.model_dump()
 

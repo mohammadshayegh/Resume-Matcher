@@ -6,6 +6,7 @@ LLM hot path) built from these factories. Keeping construction here lets tests
 spin up fully isolated engines against a temp-file database.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,9 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from app.models import Base
+from app.models import LOCAL_USER_ID, Base
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Base", "make_async_engine", "make_sync_engine", "init_models_sync"]
 
@@ -59,6 +62,50 @@ def make_sync_engine(path: Path) -> Engine:
     return engine
 
 
+# Tables that gained a ``user_id`` partition key when Supabase authentication
+# was introduced. ``api_keys`` is absent on purpose: LLM credentials stay
+# operator-owned and shared across accounts.
+_USER_PARTITIONED_TABLES: tuple[str, ...] = (
+    "resumes",
+    "jobs",
+    "improvements",
+    "tailoring_previews",
+    "applications",
+)
+
+
+def _add_user_partition(conn: Any) -> None:
+    """Backfill the ``user_id`` partition key on a pre-auth local database.
+
+    ``create_all`` never ALTERs an existing SQLite table, so a database created
+    before multi-user support has these tables without ``user_id``. Adding the
+    column is idempotent and additive; rows already present are attributed to
+    the local single-user id, which is the account they were in fact created
+    under (authentication did not exist yet).
+
+    The old global single-master unique index is dropped: with more than one
+    account, "exactly one master resume" is a per-user invariant, and leaving
+    the global index in place would let the first user's master block everyone
+    else's. ``create_all`` above has already created the per-user replacement.
+    """
+    for table in _USER_PARTITIONED_TABLES:
+        columns = conn.exec_driver_sql(f"PRAGMA table_info({table})").mappings().all()
+        if not columns:
+            continue  # Table does not exist yet; create_all made it correctly.
+        if "user_id" in {column["name"] for column in columns}:
+            continue
+        conn.exec_driver_sql(
+            f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT '{LOCAL_USER_ID}'"
+        )
+        conn.exec_driver_sql(
+            f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table} (user_id)"
+        )
+        logger.info("Added user_id partition key to %s", table)
+
+    # Replaced by ux_resumes_single_master_per_user (created by create_all).
+    conn.exec_driver_sql("DROP INDEX IF EXISTS ux_resumes_single_master")
+
+
 def init_models_sync(engine: Engine) -> None:
     """Create all tables (idempotent) using a sync engine connection."""
     Base.metadata.create_all(engine)
@@ -76,4 +123,10 @@ def init_models_sync(engine: Engine) -> None:
         preview_columns = conn.exec_driver_sql("PRAGMA table_info(tailoring_previews)").mappings().all()
         if preview_columns and "improvements" not in {column["name"] for column in preview_columns}:
             conn.exec_driver_sql("ALTER TABLE tailoring_previews ADD COLUMN improvements JSON")
-        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_preview_compatibility ON tailoring_previews (source_id, job_id, payload_hash, created_at)")
+
+        _add_user_partition(conn)
+
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_preview_compatibility "
+            "ON tailoring_previews (user_id, source_id, job_id, payload_hash, created_at)"
+        )

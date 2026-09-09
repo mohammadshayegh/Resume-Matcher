@@ -48,6 +48,18 @@
     "goToSettings": "Ir a Configuración",
     "applicationTracker": "Seguimiento de candidaturas"
   },
+  "auth": {
+    "eyebrow": "Cuenta requerida",
+    "title": "Iniciar sesión",
+    "subtitle": "Resume Matcher mantiene tus currículums, versiones adaptadas y el seguimiento de candidaturas privados en tu cuenta.",
+    "signInWithGoogle": "Continuar con Google",
+    "redirecting": "Redirigiendo…",
+    "signInFailed": "Error al iniciar sesión",
+    "signOut": "Cerrar sesión",
+    "privacyNote": "Google es el único método de acceso. Nunca vemos ni almacenamos tu contraseña de Google. Tus archivos de currículum permanecen en este servidor: Supabase solo guarda la identidad de tu cuenta.",
+    "notConfiguredTitle": "La autenticación no está configurada",
+    "notConfiguredBody": "Esta instalación no tiene un proyecto de Supabase configurado. Define NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY en el frontend, y SUPABASE_URL en el backend, y reinicia ambos."
+  },
   "dashboard": {
     "title": "Panel",
     "subtitle": "Gestiona tus currículums y solicitudes de empleo",
@@ -739,11 +751,46 @@
         "health_check_failed": "La verificación falló.",
         "duplicate_v1_path": "La verificación falló. La URL base puede contener un /v1 duplicado.",
         "not_found_404": "La verificación falló. 404 No encontrado: comprueba que la URL base coincide con el proveedor.",
-        "html_response": "La verificación falló. La URL base devolvió HTML; puede ser la URL de consola o una ruta de puerta de enlace no compatible."
+        "html_response": "La verificación falló. La URL base devolvió HTML; puede ser la URL de consola o una ruta de puerta de enlace no compatible.",
+        "codex_unavailable": "La CLI de Codex no está instalada o no está en el PATH del servidor.",
+        "codex_not_authenticated": "La CLI de Codex no tiene sesión iniciada. Ejecuta `codex login` en el servidor.",
+        "codex_model_unsupported": "El modelo configurado no está disponible para esta cuenta de Codex o versión de la CLI.",
+        "codex_timeout": "La CLI de Codex no respondió dentro del tiempo asignado a la solicitud.",
+        "codex_failed": "La CLI de Codex devolvió un error."
       },
       "healthWarnings": {
         "empty_content": "El LLM devolvió contenido vacío en la verificación de salud."
       }
+    },
+    "aiBackend": {
+      "title": "Backend de IA",
+      "serverManagedNotice": "El proveedor y el modelo de IA se configuran en el servidor de esta instalación. Este panel muestra qué se está usando, cuánto se ha consumido y cuánto margen queda.",
+      "cliLabel": "CLI",
+      "cliMissing": "No instalado",
+      "cliNotAuthenticated": "Sin sesión iniciada",
+      "cliReady": "Listo",
+      "consumptionTitle": "Consumo",
+      "callsLabel": "Llamadas",
+      "tokensTotalLabel": "Tokens totales",
+      "tokensInLabel": "Tokens de entrada",
+      "tokensOutLabel": "Tokens de salida",
+      "cachedTokens": "{tokens} en caché",
+      "reasoningTokens": "{tokens} de razonamiento",
+      "countersScopeNote": "Los contadores corresponden al proceso actual del backend y se reinician al reiniciarlo",
+      "lastCall": "última llamada {tokens}",
+      "quotaPrimary": "Ventana corta restante",
+      "quotaSecondary": "Ventana larga restante",
+      "quotaRemaining": "Restante",
+      "quotaExhausted": "Límite de uso alcanzado: las solicitudes fallarán hasta que se reinicie la ventana.",
+      "quotaUnsupported": "Este proveedor no informa ningún límite de uso.",
+      "planLabel": "Plan: {plan}",
+      "contextWindowLabel": "Contexto: {tokens}",
+      "creditsLabel": "Créditos: {balance}",
+      "resetsNow": "reiniciándose ahora",
+      "resetsInDays": "se reinicia en {days} d {hours} h",
+      "resetsInHours": "se reinicia en {hours} h {minutes} min",
+      "resetsInMinutes": "se reinicia en {minutes} min",
+      "usageUnavailable": "No se pudo cargar el uso de IA desde el backend."
     },
     "contentGeneration": {
       "title": "Generación de contenido",

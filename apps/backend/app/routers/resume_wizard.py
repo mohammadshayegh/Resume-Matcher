@@ -5,8 +5,9 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.auth import AuthUser, get_current_user, get_current_writer
 from app.ai_budget import AIOperationDeadlineExceeded, AIOperationRoute
 from app.ai_limits import PromptSizeError
 from app.database import db
@@ -27,8 +28,13 @@ from app.services.resume_wizard import (
 
 logger = logging.getLogger(__name__)
 
+# Router-level auth covers /turn too: it persists nothing, but it does spend
+# the deployment's LLM budget, so it must not be an open door.
 router = APIRouter(
-    route_class=AIOperationRoute, prefix="/resume-wizard", tags=["Resume Wizard"]
+    route_class=AIOperationRoute,
+    prefix="/resume-wizard",
+    tags=["Resume Wizard"],
+    dependencies=[Depends(get_current_user)],
 )
 
 
@@ -103,8 +109,9 @@ async def resume_wizard_turn(
 @router.post("/finalize", response_model=ResumeWizardFinalizeResponse)
 async def finalize_resume_wizard(
     request: ResumeWizardFinalizeRequest,
+    user: AuthUser = Depends(get_current_writer),
 ) -> ResumeWizardFinalizeResponse:
-    """Create the master resume from a validated wizard draft."""
+    """Create the caller's master resume from a validated wizard draft."""
     try:
         normalized = normalize_resume_data(
             request.state.resume_data.model_dump(mode="json")
@@ -115,7 +122,7 @@ async def finalize_resume_wizard(
         filename = f"AI Resume Wizard - {name}.json"
         title = f"{name} Master Resume"
 
-        current_master = await db.get_master_resume()
+        current_master = await db.get_master_resume(user_id=user.id)
         if current_master and current_master.get("processing_status") == "ready":
             if _is_identical_wizard_master(
                 current_master,
@@ -138,17 +145,18 @@ async def finalize_resume_wizard(
             processed_data=data,
             processing_status="ready",
             title=title,
+            user_id=user.id,
         )
         if not resume.get("is_master", False):
             try:
-                await db.delete_resume(resume["resume_id"])
+                await db.delete_resume(resume["resume_id"], user_id=user.id)
             except Exception as e:
                 logger.error(
                     "Failed to clean up non-master wizard resume %s: %s",
                     resume.get("resume_id"),
                     e,
                 )
-            current_master = await db.get_master_resume()
+            current_master = await db.get_master_resume(user_id=user.id)
             if current_master and _is_identical_wizard_master(
                 current_master,
                 content=content,

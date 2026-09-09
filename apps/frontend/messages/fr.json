@@ -48,6 +48,18 @@
     "goToSettings": "Accéder aux paramètres",
     "applicationTracker": "Suivi des candidatures"
   },
+  "auth": {
+    "eyebrow": "Compte requis",
+    "title": "Connexion",
+    "subtitle": "Resume Matcher garde vos CV, vos versions personnalisées et votre suivi de candidatures privés dans votre compte.",
+    "signInWithGoogle": "Continuer avec Google",
+    "redirecting": "Redirection…",
+    "signInFailed": "Échec de la connexion",
+    "signOut": "Se déconnecter",
+    "privacyNote": "Google est le seul moyen de connexion. Nous ne voyons ni ne stockons jamais votre mot de passe Google. Vos fichiers de CV restent sur ce serveur : Supabase ne conserve que l’identité de votre compte.",
+    "notConfiguredTitle": "L’authentification n’est pas configurée",
+    "notConfiguredBody": "Cette installation n’a pas de projet Supabase configuré. Définissez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans le frontend, et SUPABASE_URL dans le backend, puis redémarrez les deux."
+  },
   "dashboard": {
     "title": "Tableau de bord",
     "subtitle": "Gérez vos CV et candidatures",
@@ -739,11 +751,46 @@
         "health_check_failed": "Échec de la vérification de l'état.",
         "duplicate_v1_path": "Échec de la vérification de l'état. L'URL de base peut contenir un chemin /v1 en double.",
         "not_found_404": "Échec de la vérification de l'état. 404 Non trouvé - vérifiez que l'URL de base correspond au fournisseur.",
-        "html_response": "Échec de la vérification de l'état. L'URL de base a retourné du HTML ; il peut s'agir d'une URL de console ou d'un chemin de passerelle non pris en charge."
+        "html_response": "Échec de la vérification de l'état. L'URL de base a retourné du HTML ; il peut s'agir d'une URL de console ou d'un chemin de passerelle non pris en charge.",
+        "codex_unavailable": "La CLI Codex n'est pas installée ou absente du PATH du serveur.",
+        "codex_not_authenticated": "La CLI Codex n'est pas connectée. Exécutez `codex login` sur le serveur.",
+        "codex_model_unsupported": "Le modèle configuré n'est pas disponible pour ce compte Codex ou cette version de la CLI.",
+        "codex_timeout": "La CLI Codex n'a pas répondu dans le délai imparti à la requête.",
+        "codex_failed": "La CLI Codex a renvoyé une erreur."
       },
       "healthWarnings": {
         "empty_content": "Le LLM a retourné un contenu vide lors de la vérification de l'état."
       }
+    },
+    "aiBackend": {
+      "title": "Backend IA",
+      "serverManagedNotice": "Le fournisseur et le modèle d'IA sont définis sur le serveur pour ce déploiement. Ce panneau indique ce qui est utilisé, ce qui a été consommé et le quota restant.",
+      "cliLabel": "CLI",
+      "cliMissing": "Non installé",
+      "cliNotAuthenticated": "Non connecté",
+      "cliReady": "Prêt",
+      "consumptionTitle": "Consommation",
+      "callsLabel": "Appels",
+      "tokensTotalLabel": "Jetons au total",
+      "tokensInLabel": "Jetons en entrée",
+      "tokensOutLabel": "Jetons en sortie",
+      "cachedTokens": "{tokens} en cache",
+      "reasoningTokens": "{tokens} de raisonnement",
+      "countersScopeNote": "Les compteurs portent sur le processus backend actuel et sont remis à zéro à son redémarrage",
+      "lastCall": "dernier appel {tokens}",
+      "quotaPrimary": "Fenêtre courte restante",
+      "quotaSecondary": "Fenêtre longue restante",
+      "quotaRemaining": "Restant",
+      "quotaExhausted": "Limite atteinte : les requêtes échoueront jusqu'à la réinitialisation de la fenêtre.",
+      "quotaUnsupported": "Ce fournisseur ne communique aucun quota d'utilisation.",
+      "planLabel": "Forfait : {plan}",
+      "contextWindowLabel": "Contexte : {tokens}",
+      "creditsLabel": "Crédits : {balance}",
+      "resetsNow": "réinitialisation en cours",
+      "resetsInDays": "réinitialisation dans {days} j {hours} h",
+      "resetsInHours": "réinitialisation dans {hours} h {minutes} min",
+      "resetsInMinutes": "réinitialisation dans {minutes} min",
+      "usageUnavailable": "Impossible de charger l'utilisation de l'IA depuis le backend."
     },
     "contentGeneration": {
       "title": "Génération de contenu",

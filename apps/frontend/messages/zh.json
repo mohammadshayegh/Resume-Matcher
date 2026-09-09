@@ -48,6 +48,18 @@
     "goToSettings": "前往设置",
     "applicationTracker": "申请追踪"
   },
+  "auth": {
+    "eyebrow": "需要账户",
+    "title": "登录",
+    "subtitle": "Resume Matcher 将你的简历、定制版本和求职跟进看板保存在你的账户内，仅你可见。",
+    "signInWithGoogle": "使用 Google 继续",
+    "redirecting": "正在跳转…",
+    "signInFailed": "登录失败",
+    "signOut": "退出登录",
+    "privacyNote": "Google 是唯一的登录方式。我们不会看到或存储你的 Google 密码。简历文件保留在本服务器上，Supabase 仅保存你的账户身份信息。",
+    "notConfiguredTitle": "尚未配置身份验证",
+    "notConfiguredBody": "此部署未设置 Supabase 项目。请在前端设置 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_ANON_KEY，在后端设置 SUPABASE_URL，然后重启两者。"
+  },
   "dashboard": {
     "title": "仪表板",
     "subtitle": "管理您的简历和求职申请",
@@ -739,11 +751,46 @@
         "health_check_failed": "健康检查失败。",
         "duplicate_v1_path": "健康检查失败。Base URL 可能包含重复的 /v1 路径。",
         "not_found_404": "健康检查失败。404 未找到，请检查 Base URL 是否与提供方匹配。",
-        "html_response": "健康检查失败。Base URL 返回了 HTML，可能是控制台地址或网关不支持该路径。"
+        "html_response": "健康检查失败。Base URL 返回了 HTML，可能是控制台地址或网关不支持该路径。",
+        "codex_unavailable": "未安装 Codex CLI，或它不在服务器的 PATH 中。",
+        "codex_not_authenticated": "Codex CLI 未登录。请在服务器上运行 `codex login`。",
+        "codex_model_unsupported": "配置的模型不适用于此 Codex 账号或 CLI 版本。",
+        "codex_timeout": "Codex CLI 未在请求时限内响应。",
+        "codex_failed": "Codex CLI 返回了错误。"
       },
       "healthWarnings": {
         "empty_content": "健康检查返回了空内容。"
       }
+    },
+    "aiBackend": {
+      "title": "AI 后端",
+      "serverManagedNotice": "本部署的 AI 提供方和模型由服务器端配置。此面板显示当前使用的配置、已消耗量以及剩余额度。",
+      "cliLabel": "CLI",
+      "cliMissing": "未安装",
+      "cliNotAuthenticated": "未登录",
+      "cliReady": "就绪",
+      "consumptionTitle": "消耗量",
+      "callsLabel": "调用次数",
+      "tokensTotalLabel": "总 token",
+      "tokensInLabel": "输入 token",
+      "tokensOutLabel": "输出 token",
+      "cachedTokens": "缓存 {tokens}",
+      "reasoningTokens": "推理 {tokens}",
+      "countersScopeNote": "计数针对当前后端进程，重启后归零",
+      "lastCall": "最近一次调用 {tokens}",
+      "quotaPrimary": "短周期剩余",
+      "quotaSecondary": "长周期剩余",
+      "quotaRemaining": "剩余",
+      "quotaExhausted": "已达到速率限制 —— 在窗口重置前请求将失败。",
+      "quotaUnsupported": "该提供方不报告使用额度。",
+      "planLabel": "套餐：{plan}",
+      "contextWindowLabel": "上下文：{tokens}",
+      "creditsLabel": "额度：{balance}",
+      "resetsNow": "正在重置",
+      "resetsInDays": "{days} 天 {hours} 小时后重置",
+      "resetsInHours": "{hours} 小时 {minutes} 分钟后重置",
+      "resetsInMinutes": "{minutes} 分钟后重置",
+      "usageUnavailable": "无法从后端加载 AI 使用量。"
     },
     "contentGeneration": {
       "title": "内容生成",

@@ -48,6 +48,18 @@
     "goToSettings": "Go to Settings",
     "applicationTracker": "Application Tracker"
   },
+  "auth": {
+    "eyebrow": "Account required",
+    "title": "Sign in",
+    "subtitle": "Resume Matcher keeps your resumes, tailored versions and application tracker private to your account.",
+    "signInWithGoogle": "Continue with Google",
+    "redirecting": "Redirecting…",
+    "signInFailed": "Sign-in failed",
+    "signOut": "Sign out",
+    "privacyNote": "Google is the only sign-in method. We never see or store your Google password. Your resume files stay on this server — only your account identity is held by Supabase.",
+    "notConfiguredTitle": "Authentication is not configured",
+    "notConfiguredBody": "This deployment has no Supabase project set. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in the frontend, and SUPABASE_URL in the backend, then restart both."
+  },
   "dashboard": {
     "title": "Dashboard",
     "subtitle": "Manage your resumes and job applications",
@@ -739,11 +751,46 @@
         "health_check_failed": "Health check failed.",
         "duplicate_v1_path": "Health check failed. The Base URL may contain a duplicate /v1 path.",
         "not_found_404": "Health check failed. 404 Not Found - check that the Base URL matches the provider.",
-        "html_response": "Health check failed. The Base URL returned HTML; it may be a console URL or an unsupported gateway path."
+        "html_response": "Health check failed. The Base URL returned HTML; it may be a console URL or an unsupported gateway path.",
+        "codex_unavailable": "The Codex CLI is not installed or not on the server's PATH.",
+        "codex_not_authenticated": "The Codex CLI is not signed in. Run `codex login` on the server.",
+        "codex_model_unsupported": "The configured model is not available to this Codex account or CLI version.",
+        "codex_timeout": "The Codex CLI did not respond within the request budget.",
+        "codex_failed": "The Codex CLI returned an error."
       },
       "healthWarnings": {
         "empty_content": "LLM returned empty content for the health check."
       }
+    },
+    "aiBackend": {
+      "title": "AI Backend",
+      "serverManagedNotice": "The AI provider and model are set on the server for this deployment. This panel reports what is in use, how much has been consumed, and how much allowance is left.",
+      "cliLabel": "CLI",
+      "cliMissing": "Not installed",
+      "cliNotAuthenticated": "Not signed in",
+      "cliReady": "Ready",
+      "consumptionTitle": "Consumption",
+      "callsLabel": "Calls",
+      "tokensTotalLabel": "Total tokens",
+      "tokensInLabel": "Input tokens",
+      "tokensOutLabel": "Output tokens",
+      "cachedTokens": "{tokens} cached",
+      "reasoningTokens": "{tokens} reasoning",
+      "countersScopeNote": "Counters cover the current backend process and reset when it restarts",
+      "lastCall": "last call {tokens}",
+      "quotaPrimary": "Short window remaining",
+      "quotaSecondary": "Long window remaining",
+      "quotaRemaining": "Remaining",
+      "quotaExhausted": "Rate limit reached — requests will fail until the window resets.",
+      "quotaUnsupported": "This provider reports no usage allowance.",
+      "planLabel": "Plan: {plan}",
+      "contextWindowLabel": "Context: {tokens}",
+      "creditsLabel": "Credits: {balance}",
+      "resetsNow": "resetting now",
+      "resetsInDays": "resets in {days}d {hours}h",
+      "resetsInHours": "resets in {hours}h {minutes}m",
+      "resetsInMinutes": "resets in {minutes}m",
+      "usageUnavailable": "Unable to load AI usage from the backend."
     },
     "contentGeneration": {
       "title": "Content Generation",

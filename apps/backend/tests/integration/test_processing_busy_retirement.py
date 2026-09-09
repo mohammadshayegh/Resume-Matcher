@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text, update
 
 from app import main as main_module
+from app.auth import LOCAL_USER_ID
 from app.database import Database
 from app.main import app
 from app.models import Resume
@@ -63,7 +64,9 @@ async def test_sustained_contention_exhausts_retirement_and_allows_later_retry(
 
     background: list[asyncio.Task[Any]] = []
     try:
-        await resumes._finish_cancelled_processing(row["resume_id"], token)
+        await resumes._finish_cancelled_processing(
+            row["resume_id"], token, LOCAL_USER_ID
+        )
         background = list(resumes._PROCESSING_CLEANUP_TASKS)
         assert background
         done, pending = await asyncio.wait(background, timeout=0.25)
@@ -152,7 +155,9 @@ async def test_lifespan_reaps_contended_retirement_before_database_close(
             assert token is not None
             await writer.__aenter__()
             await writer.execute(text("BEGIN IMMEDIATE"))
-            await resumes._finish_cancelled_processing(row["resume_id"], token)
+            await resumes._finish_cancelled_processing(
+            row["resume_id"], token, LOCAL_USER_ID
+        )
             await attempt_started.wait()
             assert not attempt_settled.is_set()
             background = list(resumes._PROCESSING_CLEANUP_TASKS)

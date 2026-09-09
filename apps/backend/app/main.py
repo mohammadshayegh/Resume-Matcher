@@ -18,11 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.ai_budget import operation_error_content
+from app.auth import assert_auth_configuration
 from app.config import settings
 from app.database import DatabaseBusyError, db
 from app.pdf import close_pdf_renderer, init_pdf_renderer
 from app.routers import (
     applications_router,
+    auth_router,
     config_router,
     enrichment_router,
     health_router,
@@ -46,6 +48,10 @@ _configure_application_logging()
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
     # Startup
+    # Fail fast on an authentication configuration that cannot be honored, so
+    # a deployment can never silently serve one shared data partition to every
+    # visitor. Runs before any I/O.
+    assert_auth_configuration()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     # Import a legacy TinyDB database into SQLite if present (idempotent).
     # Fail-fast on error: starting with an empty DB would look like data loss.
@@ -107,6 +113,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
 app.include_router(resumes_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")

@@ -9,8 +9,30 @@ FROM node:22-bookworm AS frontend-builder
 # Build argument for API URL (allows customization at build time)
 # Default routes requests through Next.js rewrites on the same origin.
 ARG NEXT_PUBLIC_API_URL=/
+
+# Supabase (Google OAuth) must be supplied at BUILD time, not run time:
+# Next.js inlines every NEXT_PUBLIC_* value into the client bundle during
+# `npm run build`, so passing these only as container environment variables
+# would leave the browser with no Supabase project and silently disable
+# sign-in. Both are publishable by design (the anon key grants only what your
+# Supabase policies grant), so baking them into the image is expected.
+#
+# Leave both empty to build a single-user image: no sign-in screen, all data
+# owned by one implicit local account.
+#
+#   docker build \
+#     --build-arg NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co \
+#     --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key .
+#
+# The backend's matching SUPABASE_URL is a normal runtime variable
+# (see docker-compose.yml).
+ARG NEXT_PUBLIC_SUPABASE_URL=
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=
+
 ENV NEXT_TELEMETRY_DISABLED=1 \
-    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 
 WORKDIR /app/frontend
 
@@ -27,7 +49,23 @@ COPY apps/frontend/ ./
 RUN npm run build
 
 # ============================================
-# Stage 2: Final Image
+# Stage 2: Codex CLI (optional AI backend)
+#
+# Only needed when the backend runs with LLM_PROVIDER=codex. It is built in a
+# node stage because the npm package resolves a platform-specific native binary
+# through optionalDependencies at install time — so this must be built for the
+# same platform/arch as the final image (it is: both are bookworm).
+#
+# The version is pinned: the CLI's model catalog and its `exec --json` event
+# names are part of the contract app/codex_cli.py parses.
+# ============================================
+FROM node:22-bookworm AS codex-builder
+
+ARG CODEX_VERSION=0.152.1
+RUN npm install -g --prefix /codex @openai/codex@${CODEX_VERSION}
+
+# ============================================
+# Stage 3: Final Image
 # ============================================
 FROM python:3.13-slim-bookworm
 
@@ -71,6 +109,26 @@ WORKDIR /app
 COPY --from=frontend-builder /usr/local/bin/node /usr/local/bin/node
 
 # ============================================
+# Codex CLI
+#
+# Inert unless LLM_PROVIDER=codex, so it costs nothing but image size for
+# other providers. Its launcher (bin/codex.js) runs on the node binary copied
+# above.
+#
+# CODEX_HOME points at the persisted data volume: Codex keeps its credentials
+# and its session rollouts there, and the backend reads remaining quota out of
+# those rollouts. Putting it on the volume means `codex login` survives a
+# container restart. Auth is deliberately NOT baked into the image — after
+# first start, run:
+#     docker compose exec <service> codex login
+# (or mount an already-authenticated host directory at this path).
+# ============================================
+COPY --from=codex-builder /codex/lib/node_modules/@openai /usr/local/lib/node_modules/@openai
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+    && chmod +x /usr/local/lib/node_modules/@openai/codex/bin/codex.js
+ENV CODEX_HOME=/app/backend/data/.codex
+
+# ============================================
 # Backend Setup
 # ============================================
 COPY apps/backend/pyproject.toml /app/backend/
@@ -101,7 +159,7 @@ RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 # ============================================
 # Data Directory & Volume
 # ============================================
-RUN mkdir -p /app/backend/data
+RUN mkdir -p /app/backend/data "$CODEX_HOME"
 
 # Create a non-root user for security
 RUN useradd -m -u 1000 appuser \

@@ -48,6 +48,18 @@
     "goToSettings": "설정으로 이동",
     "applicationTracker": "지원 현황 트래커"
   },
+  "auth": {
+    "eyebrow": "계정이 필요합니다",
+    "title": "로그인",
+    "subtitle": "Resume Matcher는 이력서, 맞춤 버전, 지원 현황을 회원님의 계정 안에서 비공개로 보관합니다.",
+    "signInWithGoogle": "Google로 계속하기",
+    "redirecting": "이동 중…",
+    "signInFailed": "로그인 실패",
+    "signOut": "로그아웃",
+    "privacyNote": "Google이 유일한 로그인 방법입니다. Google 비밀번호는 저장하거나 열람하지 않습니다. 이력서 파일은 이 서버에 보관되며, Supabase에는 계정 식별 정보만 저장됩니다.",
+    "notConfiguredTitle": "인증이 설정되지 않았습니다",
+    "notConfiguredBody": "이 배포 환경에는 Supabase 프로젝트가 설정되어 있지 않습니다. 프런트엔드에 NEXT_PUBLIC_SUPABASE_URL과 NEXT_PUBLIC_SUPABASE_ANON_KEY를, 백엔드에 SUPABASE_URL을 설정한 뒤 두 서버를 다시 시작하세요."
+  },
   "dashboard": {
     "title": "대시보드",
     "subtitle": "이력서와 지원 현황을 관리하세요",
@@ -739,11 +751,46 @@
         "health_check_failed": "상태 확인에 실패했습니다.",
         "duplicate_v1_path": "상태 확인에 실패했습니다. 기본 URL에 /v1 경로가 중복되어 있을 수 있습니다.",
         "not_found_404": "상태 확인에 실패했습니다. 404 Not Found - 기본 URL이 제공업체와 일치하는지 확인하세요.",
-        "html_response": "상태 확인에 실패했습니다. 기본 URL이 HTML을 반환했습니다. 콘솔 URL이거나 지원되지 않는 게이트웨이 경로일 수 있습니다."
+        "html_response": "상태 확인에 실패했습니다. 기본 URL이 HTML을 반환했습니다. 콘솔 URL이거나 지원되지 않는 게이트웨이 경로일 수 있습니다.",
+        "codex_unavailable": "Codex CLI가 설치되지 않았거나 서버 PATH에 없습니다.",
+        "codex_not_authenticated": "Codex CLI에 로그인되지 않았습니다. 서버에서 `codex login`을 실행하세요.",
+        "codex_model_unsupported": "구성된 모델은 이 Codex 계정 또는 CLI 버전에서 사용할 수 없습니다.",
+        "codex_timeout": "Codex CLI가 요청 제한 시간 내에 응답하지 않았습니다.",
+        "codex_failed": "Codex CLI가 오류를 반환했습니다."
       },
       "healthWarnings": {
         "empty_content": "상태 확인 시 LLM이 빈 응답을 반환했습니다."
       }
+    },
+    "aiBackend": {
+      "title": "AI 백엔드",
+      "serverManagedNotice": "이 배포에서는 AI 공급자와 모델이 서버에서 설정됩니다. 이 패널은 사용 중인 구성, 소비량, 남은 사용량을 보여줍니다.",
+      "cliLabel": "CLI",
+      "cliMissing": "설치되지 않음",
+      "cliNotAuthenticated": "로그인되지 않음",
+      "cliReady": "사용 가능",
+      "consumptionTitle": "소비량",
+      "callsLabel": "호출 수",
+      "tokensTotalLabel": "총 토큰",
+      "tokensInLabel": "입력 토큰",
+      "tokensOutLabel": "출력 토큰",
+      "cachedTokens": "캐시 {tokens}",
+      "reasoningTokens": "추론 {tokens}",
+      "countersScopeNote": "카운터는 현재 백엔드 프로세스 기준이며 재시작하면 초기화됩니다",
+      "lastCall": "최근 호출 {tokens}",
+      "quotaPrimary": "단기 창 잔량",
+      "quotaSecondary": "장기 창 잔량",
+      "quotaRemaining": "잔량",
+      "quotaExhausted": "사용량 한도에 도달했습니다. 창이 초기화될 때까지 요청이 실패합니다.",
+      "quotaUnsupported": "이 공급자는 사용 한도를 보고하지 않습니다.",
+      "planLabel": "플랜: {plan}",
+      "contextWindowLabel": "컨텍스트: {tokens}",
+      "creditsLabel": "크레딧: {balance}",
+      "resetsNow": "초기화 중",
+      "resetsInDays": "{days}일 {hours}시간 후 초기화",
+      "resetsInHours": "{hours}시간 {minutes}분 후 초기화",
+      "resetsInMinutes": "{minutes}분 후 초기화",
+      "usageUnavailable": "백엔드에서 AI 사용량을 불러올 수 없습니다."
     },
     "contentGeneration": {
       "title": "콘텐츠 생성",

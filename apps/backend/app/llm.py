@@ -13,8 +13,10 @@ from litellm import Router
 from litellm.router import RetryPolicy
 from pydantic import BaseModel
 
+from app import codex_cli
 from app.ai_limits import validate_prompt_size
 from app.ai_budget import remaining_timeout
+from app.codex_cli import CODEX_PROVIDER, CodexCliError
 from app.config import load_config_file, save_config_file, settings
 
 LITELLM_LOGGER_NAMES = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
@@ -53,6 +55,26 @@ MAX_JSON_CONTENT_SIZE = 1024 * 1024  # 1MB
 # output limits. Callers should use get_safe_max_tokens() so this is
 # automatically clamped to the model's actual capacity.
 DEFAULT_JSON_MAX_TOKENS = 8192
+
+# Retry hints appended to the user prompt when a structured response came back
+# malformed or truncated. Shared by the LiteLLM and Codex JSON loops so both
+# providers nudge the model with identical wording.
+_JSON_RETRY_HINTS: dict[str, str] = {
+    "resume": (
+        "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL sections. Do not truncate."
+    ),
+    "enrichment": (
+        "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL keys: items_to_enrich, "
+        "questions, analysis_summary. Do not truncate."
+    ),
+    "interview_prep": (
+        "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL keys: role_fit_analysis, "
+        "resume_questions, project_follow_ups, skill_gaps, talking_points. Do not truncate."
+    ),
+    "default": (
+        "\n\nIMPORTANT: Output ONLY a valid JSON object. Start with { and end with }."
+    ),
+}
 
 # ---------------------------------------------------------------------------
 # OpenAI-compatible endpoint allowlists
@@ -571,6 +593,10 @@ _PROVIDER_KEY_MAP: dict[str, str] = {
     "deepseek": "deepseek",
     "groq": "groq",
     "ollama": "ollama",
+    # Codex authenticates through the CLI's own credential store, never
+    # through this map. It is listed so resolve_api_key has an explicit entry
+    # instead of falling through to the provider name.
+    CODEX_PROVIDER: CODEX_PROVIDER,
 }
 
 
@@ -579,7 +605,14 @@ _PROVIDER_KEY_MAP: dict[str, str] = {
 # default), because the env var may hold a real paid-API key that would then
 # leak to a local/compatible endpoint the user set up expecting no auth.
 _PROVIDERS_WITHOUT_ENV_KEY_FALLBACK: frozenset[str] = frozenset(
-    {"openai_compatible", "ollama"}
+    {"openai_compatible", "ollama", CODEX_PROVIDER}
+)
+
+# Providers that need no API key at all: local servers that commonly run
+# without auth, plus Codex, which holds its own credentials in CODEX_HOME and
+# would report a spurious ``api_key_missing`` if held to the key check.
+PROVIDERS_WITHOUT_API_KEY: frozenset[str] = frozenset(
+    {"ollama", "openai_compatible", CODEX_PROVIDER}
 )
 
 
@@ -612,6 +645,20 @@ def resolve_api_key(stored: dict, provider: str) -> str:
     return api_key
 
 
+def resolve_model(stored: dict, provider: str) -> str:
+    """Resolve the model name for a provider from stored config + settings.
+
+    Codex reads its own ``codex_model`` slot rather than the shared ``model``
+    field. The two catalogs do not overlap — the LiteLLM default
+    (``gpt-5-nano-...``) is not a valid Codex slug and vice versa — so sharing
+    one field would mean switching providers silently produced a configuration
+    that fails on the first call.
+    """
+    if provider == CODEX_PROVIDER:
+        return stored.get("codex_model") or settings.codex_model
+    return stored.get("model", settings.llm_model)
+
+
 def get_llm_config() -> LLMConfig:
     """Get current LLM configuration.
 
@@ -627,7 +674,7 @@ def get_llm_config() -> LLMConfig:
     """
     stored = load_config_file()
     provider = stored.get("provider", settings.llm_provider)
-    model = stored.get("model", settings.llm_model)
+    model = resolve_model(stored, provider)
 
     # One-shot migration: preserve old gpt-5 reasoning_effort behavior for
     # existing configs. Gated on ABSENT key so users can opt out by clearing
@@ -687,6 +734,11 @@ def get_model_name(config: LLMConfig) -> str:
     }
 
     prefix = provider_prefixes.get(config.provider, "")
+
+    # Codex is not routed through LiteLLM: its slugs (``gpt-5.6-luna``, ...)
+    # are passed to the CLI verbatim and must never gain a provider prefix.
+    if config.provider == CODEX_PROVIDER:
+        return config.model
 
     if config.provider == "azure_foundry" and _is_azure_openai_foundry_endpoint(
         config.api_base, config.model
@@ -852,7 +904,7 @@ async def check_llm_health(
     # servers often run without auth, so a blank key is acceptable for those
     # providers — a sentinel is passed downstream (see _effective_api_key)
     # to satisfy the OpenAI client's non-empty-string validation.
-    if config.provider not in ("ollama", "openai_compatible") and not config.api_key:
+    if config.provider not in PROVIDERS_WITHOUT_API_KEY and not config.api_key:
         return {
             "healthy": False,
             "provider": config.provider,
@@ -863,6 +915,11 @@ async def check_llm_health(
     model_name = get_model_name(config)
 
     prompt = test_prompt or "Hi"
+
+    if config.provider == CODEX_PROVIDER:
+        return await _check_codex_health(
+            config, prompt=prompt, include_details=include_details
+        )
 
     try:
         # Make a minimal test call with timeout
@@ -975,6 +1032,13 @@ async def complete(
     Transport retries (429, 500, timeout) are handled by the Router.
     """
     validate_prompt_size(prompt + (system_prompt or ""))
+    if config is None:
+        config = get_llm_config()
+    if config.provider == CODEX_PROVIDER:
+        return await _complete_codex(
+            prompt, system_prompt=system_prompt, config=config, max_tokens=max_tokens
+        )
+
     router, config = get_router(config)
     model_name = get_model_name(config)
 
@@ -1347,6 +1411,10 @@ def _calculate_timeout(
         "openrouter": 1.5,  # More variable latency
         "groq": 1.0,
         "ollama": 2.0,  # Local models can be slower
+        # Codex pays CLI startup, a large system preamble, and agent-loop
+        # overhead on every turn, so a turn is materially slower than a bare
+        # chat-completions call to the same class of model.
+        CODEX_PROVIDER: 2.0,
     }
     provider_factor = provider_factors.get(provider, 1.0)
 
@@ -1526,6 +1594,19 @@ async def complete_json(
             ``ValueError`` rejects the content inside this retry budget.
     """
     validate_prompt_size(prompt + (system_prompt or ""))
+    if config is None:
+        config = get_llm_config()
+    if config.provider == CODEX_PROVIDER:
+        return await _complete_json_codex(
+            prompt,
+            system_prompt=system_prompt,
+            config=config,
+            max_tokens=max_tokens,
+            retries=retries,
+            schema_type=schema_type,
+            response_validator=response_validator,
+        )
+
     router, config = get_router(config)
     model_name = get_model_name(config)
 
@@ -1631,22 +1712,9 @@ async def complete_json(
                         attempt + 1,
                         retries + 1,
                     )
-                    if schema_type == "resume":
-                        hint = (
-                            "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL sections. Do not truncate."
-                        )
-                    elif schema_type == "enrichment":
-                        hint = (
-                            "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL keys: items_to_enrich, questions, analysis_summary. Do not truncate."
-                        )
-                    elif schema_type == "interview_prep":
-                        hint = (
-                            "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL keys: role_fit_analysis, resume_questions, project_follow_ups, skill_gaps, talking_points. Do not truncate."
-                        )
-                    else:
-                        hint = (
-                            "\n\nIMPORTANT: Output ONLY a valid JSON object. Start with { and end with }."
-                        )
+                    hint = _JSON_RETRY_HINTS.get(
+                        schema_type, _JSON_RETRY_HINTS["default"]
+                    )
                     messages[-1]["content"] = prompt + hint
                     continue
                 logging.warning(
@@ -1713,6 +1781,211 @@ async def complete_json(
             # Transport errors — Router already retried with backoff.
             # Cooldowns are disabled (see _build_router); no additional
             # retry is attempted here.
+            raise
+
+    raise ValueError(f"Failed after {retries + 1} attempts")
+
+
+# ---------------------------------------------------------------------------
+# Codex CLI provider
+#
+# Codex is a local subprocess, not an HTTP endpoint, so it bypasses the Router
+# entirely: there is no api_base or api_key to route with, and transport
+# retries/cooldowns are meaningless for a process invocation. What it does
+# share with the LiteLLM path is everything downstream of "get me some text":
+# the JSON extractor, the truncation heuristics, and the retry-with-a-hint
+# loop, all reused below.
+#
+# Note that ``max_tokens`` is accepted but NOT enforced for Codex: the CLI
+# exposes no output-budget flag. It is still threaded through to
+# ``_calculate_timeout`` so a large-output request gets a longer deadline.
+# ---------------------------------------------------------------------------
+
+
+def _codex_error_result(
+    config: LLMConfig,
+    error: Exception,
+    *,
+    prompt: str,
+    include_details: bool,
+) -> dict[str, Any]:
+    """Shape a Codex failure like every other health-check failure."""
+    message = str(error)
+    if isinstance(error, codex_cli.CodexUnavailableError):
+        error_code = "codex_unavailable"
+    elif isinstance(error, TimeoutError):
+        error_code = "codex_timeout"
+    elif "not authenticated" in message.lower() or "log in" in message.lower():
+        error_code = "codex_not_authenticated"
+    elif "not supported" in message.lower() or "requires a newer version" in message.lower():
+        error_code = "codex_model_unsupported"
+    else:
+        error_code = "codex_failed"
+
+    result: dict[str, Any] = {
+        "healthy": False,
+        "provider": config.provider,
+        "model": config.model,
+        "error_code": error_code,
+    }
+    if include_details:
+        result["test_prompt"] = _to_code_block(prompt)
+        result["model_output"] = _to_code_block(None)
+        result["error_detail"] = _to_code_block(_scrub_secrets(message))
+    return result
+
+
+async def _check_codex_health(
+    config: LLMConfig,
+    *,
+    prompt: str,
+    include_details: bool,
+) -> dict[str, Any]:
+    """Prove the Codex CLI is installed, authenticated, and answering."""
+    try:
+        result = await codex_cli.health_check(
+            model=config.model,
+            timeout=remaining_timeout(
+                _calculate_timeout("health_check", 64, config.provider)
+            ),
+            prompt=prompt,
+            reasoning_effort=config.reasoning_effort,
+        )
+    except Exception as error:
+        logging.exception(
+            "Codex CLI health check failed",
+            extra={"provider": config.provider, "model": config.model},
+        )
+        return _codex_error_result(
+            config, error, prompt=prompt, include_details=include_details
+        )
+
+    payload: dict[str, Any] = {
+        "healthy": True,
+        "provider": config.provider,
+        "model": config.model,
+        "response_model": config.model,
+    }
+    if include_details:
+        payload["test_prompt"] = _to_code_block(prompt)
+        payload["model_output"] = _to_code_block(result.text)
+        payload["reasoning_content"] = None
+    return payload
+
+
+async def _complete_codex(
+    prompt: str,
+    *,
+    system_prompt: str | None,
+    config: LLMConfig,
+    max_tokens: int,
+) -> str:
+    """Plain-text completion via the Codex CLI."""
+    try:
+        content = await codex_cli.complete(
+            prompt,
+            system_prompt=system_prompt,
+            model=config.model,
+            timeout=remaining_timeout(
+                _calculate_timeout("completion", max_tokens, config.provider)
+            ),
+            reasoning_effort=config.reasoning_effort,
+        )
+    except TimeoutError:
+        raise
+    except Exception as e:
+        logging.error("Codex CLI completion failed: %s", e, extra={"model": config.model})
+        raise ValueError(
+            "LLM completion failed. Please check your API configuration and try again."
+        ) from e
+
+    if "<think>" in content:
+        content = _strip_thinking_tags(content)
+    content = content.strip()
+    if not content:
+        raise ValueError("Response contained no visible output")
+    return content
+
+
+async def _complete_json_codex(
+    prompt: str,
+    *,
+    system_prompt: str | None,
+    config: LLMConfig,
+    max_tokens: int,
+    retries: int,
+    schema_type: str,
+    response_validator: Callable[[dict[str, Any]], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """JSON completion via the Codex CLI, reusing the shared retry policy.
+
+    Mirrors ``complete_json``'s content-quality loop (hint-on-retry, brace
+    balancing, truncation heuristics, optional validator) minus every
+    LiteLLM-specific concern. No ``response_format`` fallback ladder is needed:
+    Codex either honours the prompt or it does not, and there is no server to
+    reject an unsupported parameter.
+    """
+    json_system = (system_prompt or "") + (
+        "\n\nYou must respond with valid JSON only. No explanations, no markdown."
+    )
+    current_prompt = prompt
+
+    for attempt in range(retries + 1):
+        try:
+            content = await codex_cli.complete(
+                current_prompt,
+                system_prompt=json_system,
+                model=config.model,
+                timeout=remaining_timeout(
+                    _calculate_timeout("json", max_tokens, config.provider)
+                ),
+                reasoning_effort=config.reasoning_effort,
+            )
+            if not content:
+                raise ValueError("Empty response from Codex CLI")
+
+            # Never log response bodies: they carry resumes and job
+            # descriptions, i.e. user-provided personal data.
+            logging.debug(
+                "Received Codex JSON response (attempt %d, length: %d)",
+                attempt + 1,
+                len(content),
+            )
+
+            result = json.loads(_extract_json(content))
+            if not isinstance(result, dict):
+                raise ValueError("Expected a JSON object")
+            if response_validator is not None:
+                result = response_validator(result)
+                if not isinstance(result, dict):
+                    raise ValueError("Response validator must return a JSON object")
+
+            if _appears_truncated(result, schema_type) and attempt < retries:
+                logging.warning(
+                    "Codex JSON appears truncated (attempt %d/%d), retrying",
+                    attempt + 1,
+                    retries + 1,
+                )
+                current_prompt = prompt + _JSON_RETRY_HINTS.get(
+                    schema_type, _JSON_RETRY_HINTS["default"]
+                )
+                continue
+
+            return result
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logging.warning("Codex JSON attempt %d failed: %s", attempt + 1, e)
+            if attempt < retries:
+                current_prompt = prompt + _JSON_RETRY_HINTS["default"]
+                continue
+            if isinstance(e, json.JSONDecodeError):
+                raise ValueError(
+                    f"Failed to parse JSON after {retries + 1} attempts: {e}"
+                ) from e
+            raise
+        except (TimeoutError, CodexCliError):
+            # A dead CLI or an exhausted deadline will not be fixed by asking
+            # again with a longer prompt.
             raise
 
     raise ValueError(f"Failed after {retries + 1} attempts")

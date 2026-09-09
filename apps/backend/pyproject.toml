@@ -13,6 +13,8 @@ dependencies = [
     "sqlalchemy[asyncio]==2.0.36",
     "aiosqlite==0.20.0",
     "cryptography==48.0.1",
+    "pyjwt==2.10.1",
+    "httpx>=0.28.0",
     "litellm==1.86.2",
     "markitdown[docx]==0.1.4",
     "pdfminer.six==20260107",

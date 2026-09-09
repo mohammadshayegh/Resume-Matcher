@@ -10,6 +10,7 @@ import {
   DEFAULT_TEMPLATE_SETTINGS,
 } from '@/lib/types/template-settings';
 import { API_BASE } from '@/lib/api/client';
+import { printRequestHeaders } from '@/lib/api/print-auth';
 import { translate } from '@/lib/i18n/server';
 import { resolveLocale } from '@/lib/i18n/locale';
 import { withLocalizedDefaultSections } from '@/lib/utils/section-helpers';
@@ -34,6 +35,8 @@ type PageProps = {
     showContactIcons?: string;
     accentColor?: string;
     lang?: string;
+    /** Scoped, short-lived token the backend's PDF renderer passes in. */
+    print_token?: string;
   }>;
 };
 
@@ -76,9 +79,10 @@ function parseBoolean(value: string | undefined, defaultValue: boolean): boolean
   return defaultValue;
 }
 
-async function fetchResumeData(id: string): Promise<ResumeData> {
+async function fetchResumeData(id: string, printToken?: string): Promise<ResumeData> {
   const res = await fetch(`${API_BASE}/resumes?resume_id=${encodeURIComponent(id)}`, {
     cache: 'no-store',
+    headers: await printRequestHeaders(printToken),
   });
   if (!res.ok) {
     throw new Error(`Failed to load resume (status ${res.status}).`);
@@ -158,7 +162,7 @@ function parsePageSize(value: string | undefined): PageSize {
 export default async function PrintResumePage({ params, searchParams }: PageProps) {
   const resolvedParams = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
-  const resumeData = await fetchResumeData(resolvedParams.id);
+  const resumeData = await fetchResumeData(resolvedParams.id, resolvedSearchParams?.print_token);
   const locale = resolveLocale(resolvedSearchParams?.lang);
   const t = (key: string, params?: Record<string, string | number>) =>
     translate(locale, key, params);

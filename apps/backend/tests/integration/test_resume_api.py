@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.auth import LOCAL_USER_ID
 from app.database import ResumeNotFoundError
 from app.main import app
 from app.schemas import InterviewPrepData
@@ -393,6 +394,7 @@ class TestRetryProcessing:
             "token-1",
             processing_status="ready",
             processed_data=sample_resume,
+            user_id=LOCAL_USER_ID,
         )
 
     @patch("app.routers.resumes.parse_resume_to_json", new_callable=AsyncMock)

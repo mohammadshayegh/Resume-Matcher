@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import LayoutGrid from 'lucide-react/dist/esm/icons/layout-grid';
 import { useTranslations } from '@/lib/i18n';
+import { AccountMenu } from '@/components/auth/account-menu';
 
 export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
   const { t } = useTranslations();
@@ -57,6 +58,7 @@ export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
             <span className="uppercase font-bold">Resume Matcher</span>
           </div>
           <div className="flex items-center gap-4">
+            <AccountMenu />
             <Link
               href="/tracker"
               className="inline-flex items-center justify-center gap-2 bg-background text-black border border-black px-6 py-2 uppercase font-bold tracking-wide shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none transition-all min-w-[140px] text-center"

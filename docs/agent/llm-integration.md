@@ -15,6 +15,61 @@ Backend uses LiteLLM to support multiple providers through a unified API:
 | **Google Gemini**    | Cloud | Gemini 3 Flash                               |
 | **OpenRouter**       | Cloud | Access to multiple models                    |
 | **DeepSeek**         | Cloud | DeepSeek Chat                                |
+| **Codex CLI**        | Local subprocess | Not routed through LiteLLM — see below |
+
+### Codex CLI provider (`LLM_PROVIDER=codex`)
+
+Codex is the one provider that does **not** go through LiteLLM. The Codex CLI is
+not an HTTP endpoint: it owns its own authentication (a ChatGPT session or API
+key in `$CODEX_HOME/auth.json`), its own model catalog and its own quota, so
+there is no base URL or API key for the Router to hold. `app/codex_cli.py`
+speaks the CLI's non-interactive protocol directly and `app/llm.py` dispatches
+to it from `complete()`, `complete_json()` and `check_llm_health()`.
+
+What that means in practice:
+
+| Concern | Codex behaviour |
+| ------- | --------------- |
+| Model | Read from its own `CODEX_MODEL` / `codex_model` slot, never `LLM_MODEL` (the LiteLLM default is not a valid Codex slug). Passed to the CLI verbatim — `get_model_name` adds no prefix. |
+| Auth | `codex login` on the host/container. `LLM_API_KEY` is deliberately **not** used as a fallback, so a paid key cannot leak into the CLI. |
+| API key check | Skipped (`PROVIDERS_WITHOUT_API_KEY`), so health/status don't report `api_key_missing`. |
+| JSON mode | No `response_format`. Prompt-only JSON reusing `_extract_json`, `_appears_truncated` and the shared `_JSON_RETRY_HINTS` retry ladder. A JSON Schema can be passed through `--output-schema` when a caller has one. |
+| `max_tokens` | Accepted but **not enforced** — the CLI exposes no output-budget flag. It still scales the timeout. |
+| Reasoning effort | Sent as `-c model_reasoning_effort=…`; the app's `minimal` maps to Codex's `low`. |
+| Retries | No Router, so no transport retries. Content-quality retries behave as for other providers; a missing/broken CLI is not retried. |
+| Timeout factor | 2.0 — a turn pays CLI startup, a large system preamble and agent-loop overhead. |
+
+Invocation contract (`_build_argv`), all of which the tests pin:
+
+- `codex exec --json` — one JSON event per stdout line. The answer is
+  `item.completed` / `agent_message`; usage is on `turn.completed`. An
+  `item.completed` whose item type is `error` is a **non-fatal notice**, not a
+  failure — only top-level `error` / `turn.failed` fail a turn.
+- `--ignore-user-config` so a developer's `config.toml` (model, skills,
+  plugins, notify hooks) cannot change server behaviour. Auth still resolves
+  from `CODEX_HOME`.
+- `--sandbox read-only` plus an empty workspace (`CODEX_WORKDIR`, default an
+  empty dir under `data/`) so a generation turn cannot write to disk or pull
+  project files into a prompt.
+- The prompt is written to **stdin** (`-`), never argv, so resume and
+  job-description text never appears in the process table.
+- Runs are **not** `--ephemeral`: remaining quota is only recorded in the
+  session rollout (see Usage and quota below).
+
+### Usage and quota
+
+`GET /api/v1/config/ai-usage` reports the active backend read-only, plus:
+
+- **Token counters** — folded in per turn from `turn.completed.usage`. These are
+  **per worker process** and reset on restart; they are a diagnostic read-out,
+  not an accounting ledger.
+- **Remaining quota** — the exec event stream carries no allowance data, so
+  `read_rate_limits()` reads the `token_count` event Codex writes into its own
+  session rollout (`$CODEX_HOME/sessions/**/rollout-*.jsonl`), preferring the
+  rollout for the last thread this process created. It returns `None` rather
+  than raising when Codex has not run or the file is unreadable — quota is
+  diagnostic and must never fail the status endpoint. Non-Codex providers
+  expose no allowance endpoint, so `quota` is always `null` for them.
 
 ## API Key Handling
 
@@ -41,6 +96,10 @@ The `complete_json()` function automatically enables `response_format={"type": "
 - Gemini
 - DeepSeek
 - Major OpenRouter models
+
+Codex is the exception: it has no `response_format` parameter, so its JSON path
+is prompt-only (with an optional `--output-schema`). See the Codex section
+above.
 
 ## Retry Logic
 
@@ -211,10 +270,18 @@ Output ONLY the improved bullet point, no explanations.
 
 ## Provider Configuration
 
-Users configure their preferred AI provider via:
+The provider and model are **server-side configuration** (`.env` /
+`config.json`), read via:
 
-- Settings page: `/settings`
-- API: `PUT /api/v1/config/llm-api-key`
+- API: `GET /api/v1/config/llm-api-key` (current config), `PUT` to change it
+- API: `GET /api/v1/config/ai-usage` (active backend + consumption + quota)
+
+The Settings page reports this configuration read-only — it shows the active
+provider/model, health, consumption and remaining quota, and offers a live
+connection probe. It no longer presents a provider picker or key/base-URL
+form, because a deployment runs a single backend instance whose backend is
+chosen by whoever operates it. The `PUT` endpoint is retained for the
+`.env`-driven and scripted setup paths.
 
 Azure AI Foundry uses LiteLLM's `azure_ai/` route for generic Azure AI Inference endpoints. Foundry-hosted Azure OpenAI endpoints such as `https://<resource>.services.ai.azure.com/openai/v1/responses` are normalized to the service root and routed through LiteLLM's `azure/` provider automatically. Set `LLM_PROVIDER=azure_foundry`, `LLM_MODEL` to the Foundry model or deployment name, `LLM_API_BASE` to the Azure AI endpoint, and store the Foundry API key in the `azure_foundry` key slot.
 
@@ -226,7 +293,7 @@ The `/api/v1/health` endpoint validates LLM connectivity.
 
 ## Timeouts
 
-Health checks use a 30-second transport timeout. Completion and JSON base transport timeouts are 120 and 180 seconds. `_calculate_timeout` multiplies the base by `max(1, max_tokens / 4096)` and a provider factor: Anthropic/Azure Foundry 1.2, OpenRouter 1.5, Ollama 2.0, and 1.0 for other providers. For example, an 8,192-token Ollama JSON call has a 720-second adaptive transport allowance when called outside an HTTP operation budget.
+Health checks use a 30-second transport timeout. Completion and JSON base transport timeouts are 120 and 180 seconds. `_calculate_timeout` multiplies the base by `max(1, max_tokens / 4096)` and a provider factor: Anthropic/Azure Foundry 1.2, OpenRouter 1.5, Ollama 2.0, Codex 2.0, and 1.0 for other providers. For example, an 8,192-token Ollama JSON call has a 720-second adaptive transport allowance when called outside an HTTP operation budget.
 
 AI POST routes also have one absolute operation deadline, starting before validation/preloads and covering all stages, retries and persistence. Each model call uses the smaller of its adaptive transport allowance and the remaining operation time. Content retries recalculate the remaining time; nested work cannot restart the deadline. `REQUEST_TIMEOUT_SECONDS` defaults to 240 and supports 30–1,800 seconds. Align frontend `NEXT_PUBLIC_REQUEST_TIMEOUT_MS` and proxy settings when increasing it for a local model.
 
@@ -236,7 +303,8 @@ These are cooperative cancellation budgets. Owned document/PDF/database cleanup 
 
 | File                                     | Purpose                        |
 | ---------------------------------------- | ------------------------------ |
-| `apps/backend/app/llm.py`                | LiteLLM wrapper with JSON mode |
+| `apps/backend/app/llm.py`                | LiteLLM wrapper with JSON mode; dispatches the Codex provider |
+| `apps/backend/app/codex_cli.py`          | Codex CLI subprocess adapter (events, usage, quota) |
 | `apps/backend/app/prompts/templates.py`  | Prompt templates               |
 | `apps/backend/app/prompts/enrichment.py` | Enrichment-specific prompts    |
 | `apps/backend/app/config.py`             | Provider configuration         |

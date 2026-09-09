@@ -1,7 +1,14 @@
 services:
   resume-matcher:
     image: ghcr.io/srbhr/resume-matcher
-    build: .
+    build:
+      context: .
+      args:
+        # Supabase must be baked in at build time: Next.js inlines
+        # NEXT_PUBLIC_* into the client bundle. Leave unset for a single-user
+        # image (no sign-in screen). See Dockerfile for the full note.
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     container_name: resume-matcher
     ports:
       - "${PORT:-3000}:3000"
@@ -31,6 +38,15 @@ services:
       - LLM_API_BASE=${LLM_API_BASE:-}
       # CORS origins (JSON array format). FRONTEND_BASE_URL is auto-included.
       #- CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+      # Authentication (Supabase, Google OAuth only). Leave SUPABASE_URL empty
+      # for single-user mode: no sign-in, all data in one local account. Set it
+      # to the SAME project as the NEXT_PUBLIC_SUPABASE_URL build arg above.
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      # Only for projects still on legacy HS256 JWTs; new projects use JWKS.
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-}
+      # Set true for any multi-user deployment so a missing SUPABASE_URL fails
+      # at startup instead of serving one shared data partition to everybody.
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-false}
     restart: unless-stopped
 
 #secrets:

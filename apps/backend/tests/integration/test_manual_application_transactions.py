@@ -128,8 +128,8 @@ async def test_cancelled_manual_card_creation_rolls_back_its_job(
     allocating = asyncio.Event()
     original = database._next_position
 
-    async def pause_position(session: Any, status: str) -> int:
-        position = await original(session, status)
+    async def pause_position(session: Any, status: str, user_id: str) -> int:
+        position = await original(session, status, user_id)
         allocating.set()
         await asyncio.Event().wait()
         return position

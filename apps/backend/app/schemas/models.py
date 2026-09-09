@@ -710,6 +710,66 @@ class LLMConfigResponse(BaseModel):
     reasoning_effort: ReasoningEffortLiteral | None = None
 
 
+class TokenUsage(BaseModel):
+    """Token counts for one AI turn (or a process-lifetime total)."""
+
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class QuotaWindow(BaseModel):
+    """One provider rate-limit window (e.g. a 5-hour or weekly allowance)."""
+
+    used_percent: float
+    remaining_percent: float
+    window_minutes: int | None = None
+    #: Unix seconds at which the window rolls over.
+    resets_at: int | None = None
+
+
+class QuotaSnapshot(BaseModel):
+    """Remaining provider allowance, as last reported by the provider."""
+
+    plan_type: str | None = None
+    primary: QuotaWindow | None = None
+    secondary: QuotaWindow | None = None
+    credits: dict[str, Any] | None = None
+    rate_limit_reached: bool = False
+    #: Unix seconds when the underlying snapshot was written.
+    source_updated_at: int | None = None
+    context_window: int | None = None
+    thread_total_tokens: int | None = None
+
+
+class AiUsageResponse(BaseModel):
+    """Read-only view of the backend's active AI backend and its consumption.
+
+    Serves the Settings page, which no longer selects a provider: this
+    deployment's provider/model come from server configuration, so the page
+    reports what is in use rather than offering a choice.
+    """
+
+    provider: str
+    model: str
+    reasoning_effort: ReasoningEffortLiteral | None = None
+    #: True when the provider is a local CLI rather than an HTTP endpoint.
+    is_cli_provider: bool = False
+    #: CLI-only: whether the executable was found and has credentials on disk.
+    cli_available: bool | None = None
+    cli_authenticated: bool | None = None
+    cli_version: str | None = None
+    #: Calls made by this worker process since it started.
+    calls: int = 0
+    last_usage: TokenUsage | None = None
+    session_totals: TokenUsage | None = None
+    #: None when the provider reports no quota information.
+    quota: QuotaSnapshot | None = None
+
+
 class FeatureConfigRequest(BaseModel):
     """Request to update feature settings."""
 

@@ -2,7 +2,16 @@
  * Centralized API Client
  *
  * Single source of truth for API configuration and base fetch utilities.
+ *
+ * Every backend call goes through `apiFetch`, which is also where the Supabase
+ * access token is attached. That is deliberate: one choke point means no
+ * endpoint can accidentally be called unauthenticated, and no caller has to
+ * remember to pass a token. When authentication is not configured the header
+ * is simply absent and the backend serves the single local user.
  */
+
+import { getAccessToken } from '@/lib/supabase/client';
+import { AUTH_ENABLED } from '@/lib/supabase/config';
 
 const DEFAULT_PUBLIC_API_URL = '/';
 const INTERNAL_API_ORIGIN = 'http://127.0.0.1:8000';
@@ -53,6 +62,32 @@ function createAbortError(reason: unknown): Error {
   const error = new Error('The operation was aborted.', { cause: reason });
   error.name = 'AbortError';
   return error;
+}
+
+/**
+ * True only where a Supabase session can be read: in the browser, with a
+ * project configured. On the server, the print pages attach their own token
+ * (`lib/api/print-auth.ts`) since there is no browser session to read.
+ */
+const CAN_ATTACH_TOKEN = AUTH_ENABLED && typeof window !== 'undefined';
+
+/**
+ * Adds `Authorization: Bearer <supabase access token>` to a request.
+ *
+ * Leaves the header alone when the caller already set one — the print pages
+ * pass their own scoped print token that way and must not be overridden.
+ */
+async function withAuthHeaders(options?: RequestInit): Promise<HeadersInit | undefined> {
+  const headers = new Headers(options?.headers);
+  if (headers.has('Authorization')) {
+    return headers;
+  }
+
+  const token = await getAccessToken();
+  if (token !== null) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return headers;
 }
 
 async function bufferResponse(response: Response): Promise<Response> {
@@ -137,7 +172,15 @@ export async function apiFetch(
   }, timeout);
 
   try {
-    const request = fetch(url, { ...options, signal: controller.signal }).then(bufferResponse);
+    // Only await when there is actually a token to fetch. Awaiting
+    // unconditionally would push every request behind a microtask even with
+    // auth disabled, which delays dispatch and breaks callers that abort
+    // immediately after issuing a request (they expect the request to have
+    // reached `fetch` already).
+    const headers = CAN_ATTACH_TOKEN ? await withAuthHeaders(options) : options?.headers;
+    const request = fetch(url, { ...options, headers, signal: controller.signal }).then(
+      bufferResponse
+    );
     return await Promise.race([request, cancellation]);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

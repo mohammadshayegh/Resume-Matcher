@@ -48,6 +48,18 @@
     "goToSettings": "Ir para Configurações",
     "applicationTracker": "Acompanhamento de candidaturas"
   },
+  "auth": {
+    "eyebrow": "Conta necessária",
+    "title": "Entrar",
+    "subtitle": "O Resume Matcher mantém seus currículos, versões personalizadas e o acompanhamento de candidaturas privados na sua conta.",
+    "signInWithGoogle": "Continuar com o Google",
+    "redirecting": "Redirecionando…",
+    "signInFailed": "Falha ao entrar",
+    "signOut": "Sair",
+    "privacyNote": "O Google é o único método de acesso. Nunca vemos nem armazenamos sua senha do Google. Seus arquivos de currículo ficam neste servidor — o Supabase guarda apenas a identidade da sua conta.",
+    "notConfiguredTitle": "A autenticação não está configurada",
+    "notConfiguredBody": "Esta instalação não tem um projeto Supabase configurado. Defina NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_ANON_KEY no frontend e SUPABASE_URL no backend, e reinicie os dois."
+  },
   "dashboard": {
     "title": "Painel",
     "subtitle": "Gerencie seus currículos e candidaturas",
@@ -739,11 +751,46 @@
         "health_check_failed": "Falha na verificação de integridade.",
         "duplicate_v1_path": "Falha na verificação de integridade. A URL base pode conter um caminho /v1 duplicado.",
         "not_found_404": "Falha na verificação de integridade. 404 Não encontrado - verifique se a URL base corresponde ao provedor.",
-        "html_response": "Falha na verificação de integridade. A URL base retornou HTML; pode ser uma URL de console ou um caminho de gateway não suportado."
+        "html_response": "Falha na verificação de integridade. A URL base retornou HTML; pode ser uma URL de console ou um caminho de gateway não suportado.",
+        "codex_unavailable": "A CLI do Codex não está instalada ou não está no PATH do servidor.",
+        "codex_not_authenticated": "A CLI do Codex não tem sessão iniciada. Execute `codex login` no servidor.",
+        "codex_model_unsupported": "O modelo configurado não está disponível para esta conta do Codex ou versão da CLI.",
+        "codex_timeout": "A CLI do Codex não respondeu dentro do tempo previsto para a solicitação.",
+        "codex_failed": "A CLI do Codex retornou um erro."
       },
       "healthWarnings": {
         "empty_content": "O LLM retornou conteúdo vazio na verificação de integridade."
       }
+    },
+    "aiBackend": {
+      "title": "Backend de IA",
+      "serverManagedNotice": "O provedor e o modelo de IA são definidos no servidor desta implantação. Este painel mostra o que está em uso, quanto foi consumido e quanto resta de cota.",
+      "cliLabel": "CLI",
+      "cliMissing": "Não instalado",
+      "cliNotAuthenticated": "Sem sessão iniciada",
+      "cliReady": "Pronto",
+      "consumptionTitle": "Consumo",
+      "callsLabel": "Chamadas",
+      "tokensTotalLabel": "Tokens totais",
+      "tokensInLabel": "Tokens de entrada",
+      "tokensOutLabel": "Tokens de saída",
+      "cachedTokens": "{tokens} em cache",
+      "reasoningTokens": "{tokens} de raciocínio",
+      "countersScopeNote": "Os contadores referem-se ao processo atual do backend e são zerados ao reiniciá-lo",
+      "lastCall": "última chamada {tokens}",
+      "quotaPrimary": "Janela curta restante",
+      "quotaSecondary": "Janela longa restante",
+      "quotaRemaining": "Restante",
+      "quotaExhausted": "Limite de uso atingido — as solicitações falharão até a janela ser reiniciada.",
+      "quotaUnsupported": "Este provedor não informa nenhuma cota de uso.",
+      "planLabel": "Plano: {plan}",
+      "contextWindowLabel": "Contexto: {tokens}",
+      "creditsLabel": "Créditos: {balance}",
+      "resetsNow": "reiniciando agora",
+      "resetsInDays": "reinicia em {days}d {hours}h",
+      "resetsInHours": "reinicia em {hours}h {minutes}min",
+      "resetsInMinutes": "reinicia em {minutes}min",
+      "usageUnavailable": "Não foi possível carregar o uso de IA do backend."
     },
     "contentGeneration": {
       "title": "Geração de Conteúdo",

@@ -4,8 +4,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from app.auth import AuthUser
 from app.routers import enrichment as enrichment_router
 from app.schemas.enrichment import RegenerateItemInput, RegenerateRequest, RegeneratedItem
+
+# These tests call the router handlers directly rather than through the ASGI
+# app, so FastAPI never resolves their ``Depends(get_current_user)``. Passing
+# an explicit user keeps them exercising the handler logic (their actual
+# target) instead of the auth plumbing, which has its own tests.
+TEST_USER = AuthUser(id="test-user")
 
 
 class TestRegenerateSchemas(unittest.TestCase):
@@ -91,7 +98,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=skills_item),
             ) as mock_regenerate_skills,
         ):
-            response = await enrichment_router.regenerate_items(request)
+            response = await enrichment_router.regenerate_items(request, user=TEST_USER)
 
         self.assertEqual(
             [item.item_id for item in response.regenerated_items],
@@ -148,7 +155,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=skills_item),
             ),
         ):
-            response = await enrichment_router.regenerate_items(request)
+            response = await enrichment_router.regenerate_items(request, user=TEST_USER)
 
         self.assertEqual([item.item_id for item in response.regenerated_items], ["skills"])
         self.assertEqual([err.item_id for err in response.errors], ["exp_0"])
@@ -189,7 +196,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch.object(enrichment_router, "db", mock_db):
-            result = await enrichment_router.apply_regenerated_items(resume_id, regenerated_items)
+            result = await enrichment_router.apply_regenerated_items(resume_id, regenerated_items, user=TEST_USER)
 
         self.assertEqual(result["updated_items"], 1)
 
@@ -227,7 +234,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch.object(enrichment_router, "db", mock_db):
-            result = await enrichment_router.apply_regenerated_items(resume_id, regenerated_items)
+            result = await enrichment_router.apply_regenerated_items(resume_id, regenerated_items, user=TEST_USER)
 
         self.assertEqual(result["updated_items"], 1)
 
@@ -262,7 +269,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(enrichment_router, "db", mock_db):
             with self.assertRaises(HTTPException) as ctx:
-                await enrichment_router.apply_regenerated_items(resume_id, regenerated_items)
+                await enrichment_router.apply_regenerated_items(resume_id, regenerated_items, user=TEST_USER)
 
         self.assertEqual(ctx.exception.status_code, 409)
         mock_db.update_resume.assert_not_called()
@@ -287,7 +294,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
         mock_db_additional.update_resume.return_value = None
 
         with patch.object(enrichment_router, "db", mock_db_additional):
-            result = await enrichment_router.apply_regenerated_items(resume_id, [base_item])
+            result = await enrichment_router.apply_regenerated_items(resume_id, [base_item], user=TEST_USER)
 
         self.assertEqual(result["updated_items"], 1)
         updated = mock_db_additional.update_resume.call_args.args[1]["processed_data"]
@@ -299,7 +306,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
         mock_db_legacy.update_resume.return_value = None
 
         with patch.object(enrichment_router, "db", mock_db_legacy):
-            result = await enrichment_router.apply_regenerated_items(resume_id, [base_item])
+            result = await enrichment_router.apply_regenerated_items(resume_id, [base_item], user=TEST_USER)
 
         self.assertEqual(result["updated_items"], 1)
         updated = mock_db_legacy.update_resume.call_args.args[1]["processed_data"]
@@ -324,7 +331,7 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(enrichment_router, "db", mock_db):
             with self.assertRaises(HTTPException) as ctx:
-                await enrichment_router.apply_regenerated_items(resume_id, regenerated_items)
+                await enrichment_router.apply_regenerated_items(resume_id, regenerated_items, user=TEST_USER)
 
         self.assertEqual(ctx.exception.status_code, 409)
         mock_db.update_resume.assert_not_called()

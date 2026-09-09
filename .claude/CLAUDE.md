@@ -113,6 +113,7 @@ apps/
 ### For Features
 | Feature | Documentation |
 |---------|---------------|
+| **Auth & multi-user** | [authentication.md](../docs/agent/features/authentication.md) — Supabase Google sign-in + per-user data isolation |
 | Application tracker | [application-tracker.md](../docs/agent/features/application-tracker.md) |
 | Custom sections | [custom-sections.md](../docs/agent/features/custom-sections.md) |
 | Resume templates | [resume-templates.md](../docs/agent/features/resume-templates.md) |

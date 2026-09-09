@@ -17,7 +17,7 @@ from typing import Any
 
 from app.config import settings
 from app.database import Database, db
-from app.models import Improvement, Job, Resume, _utcnow_iso
+from app.models import Improvement, Job, LOCAL_USER_ID, Resume, _utcnow_iso
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,9 @@ async def migrate(database: Database | None = None) -> dict[str, Any]:
             session.add(
                 Resume(
                     resume_id=r["resume_id"],
+                    # A TinyDB-era database predates authentication, so every
+                    # row in it was written by the single local user.
+                    user_id=LOCAL_USER_ID,
                     content=r.get("content", ""),
                     content_type=r.get("content_type", "md"),
                     filename=r.get("filename"),
@@ -94,6 +97,7 @@ async def migrate(database: Database | None = None) -> dict[str, Any]:
             session.add(
                 Job(
                     job_id=j["job_id"],
+                    user_id=LOCAL_USER_ID,
                     content=j.get("content", ""),
                     resume_id=j.get("resume_id"),
                     created_at=j.get("created_at") or _utcnow_iso(),
@@ -104,6 +108,7 @@ async def migrate(database: Database | None = None) -> dict[str, Any]:
             session.add(
                 Improvement(
                     request_id=imp["request_id"],
+                    user_id=LOCAL_USER_ID,
                     original_resume_id=imp.get("original_resume_id", ""),
                     tailored_resume_id=imp.get("tailored_resume_id", ""),
                     job_id=imp.get("job_id", ""),

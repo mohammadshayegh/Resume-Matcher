@@ -48,6 +48,18 @@
     "goToSettings": "設定へ",
     "applicationTracker": "応募トラッカー"
   },
+  "auth": {
+    "eyebrow": "アカウントが必要です",
+    "title": "サインイン",
+    "subtitle": "Resume Matcher は、履歴書・最適化した版・応募管理をあなたのアカウント内で非公開に保ちます。",
+    "signInWithGoogle": "Google で続行",
+    "redirecting": "リダイレクト中…",
+    "signInFailed": "サインインに失敗しました",
+    "signOut": "サインアウト",
+    "privacyNote": "サインイン方法は Google のみです。Google のパスワードを参照・保存することはありません。履歴書ファイルはこのサーバーに保存され、Supabase はアカウント情報のみを保持します。",
+    "notConfiguredTitle": "認証が設定されていません",
+    "notConfiguredBody": "この環境には Supabase プロジェクトが設定されていません。フロントエンドに NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY、バックエンドに SUPABASE_URL を設定し、両方を再起動してください。"
+  },
   "dashboard": {
     "title": "ダッシュボード",
     "subtitle": "履歴書と求人応募を管理",
@@ -739,11 +751,46 @@
         "health_check_failed": "ヘルスチェックに失敗しました。",
         "duplicate_v1_path": "ヘルスチェックに失敗しました。Base URL に /v1 が重複している可能性があります。",
         "not_found_404": "ヘルスチェックに失敗しました。404 Not Found。Base URL が提供元と一致しているか確認してください。",
-        "html_response": "ヘルスチェックに失敗しました。Base URL が HTML を返しました。コンソールURLや未対応のゲートウェイの可能性があります。"
+        "html_response": "ヘルスチェックに失敗しました。Base URL が HTML を返しました。コンソールURLや未対応のゲートウェイの可能性があります。",
+        "codex_unavailable": "Codex CLI がインストールされていない、またはサーバーの PATH にありません。",
+        "codex_not_authenticated": "Codex CLI にサインインしていません。サーバーで `codex login` を実行してください。",
+        "codex_model_unsupported": "設定されたモデルはこの Codex アカウントまたは CLI バージョンでは利用できません。",
+        "codex_timeout": "Codex CLI がリクエストの制限時間内に応答しませんでした。",
+        "codex_failed": "Codex CLI がエラーを返しました。"
       },
       "healthWarnings": {
         "empty_content": "ヘルスチェックで空の内容が返されました。"
       }
+    },
+    "aiBackend": {
+      "title": "AI バックエンド",
+      "serverManagedNotice": "このデプロイでは AI プロバイダーとモデルはサーバー側で設定されます。このパネルには使用中の構成、消費量、残りの利用枠が表示されます。",
+      "cliLabel": "CLI",
+      "cliMissing": "未インストール",
+      "cliNotAuthenticated": "未サインイン",
+      "cliReady": "利用可能",
+      "consumptionTitle": "消費量",
+      "callsLabel": "呼び出し回数",
+      "tokensTotalLabel": "合計トークン",
+      "tokensInLabel": "入力トークン",
+      "tokensOutLabel": "出力トークン",
+      "cachedTokens": "キャッシュ {tokens}",
+      "reasoningTokens": "推論 {tokens}",
+      "countersScopeNote": "カウンターは現在のバックエンドプロセスのもので、再起動時にリセットされます",
+      "lastCall": "直近の呼び出し {tokens}",
+      "quotaPrimary": "短期ウィンドウの残量",
+      "quotaSecondary": "長期ウィンドウの残量",
+      "quotaRemaining": "残量",
+      "quotaExhausted": "レート制限に達しました。ウィンドウがリセットされるまでリクエストは失敗します。",
+      "quotaUnsupported": "このプロバイダーは利用枠を報告しません。",
+      "planLabel": "プラン: {plan}",
+      "contextWindowLabel": "コンテキスト: {tokens}",
+      "creditsLabel": "クレジット: {balance}",
+      "resetsNow": "リセット中",
+      "resetsInDays": "{days}日{hours}時間後にリセット",
+      "resetsInHours": "{hours}時間{minutes}分後にリセット",
+      "resetsInMinutes": "{minutes}分後にリセット",
+      "usageUnavailable": "バックエンドから AI 使用量を読み込めませんでした。"
     },
     "contentGeneration": {
       "title": "コンテンツ生成",

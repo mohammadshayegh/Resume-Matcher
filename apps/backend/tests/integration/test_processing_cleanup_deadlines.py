@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from app.auth import LOCAL_USER_ID
 from app.routers import resumes
 
 
@@ -48,7 +49,7 @@ async def test_stalled_finish_returns_bounded_and_keeps_owned_background_cleanup
         return await finish(*args, **kwargs)
 
     monkeypatch.setattr(isolated_db, "finish_resume_processing", stalled)
-    caller = asyncio.create_task(resumes._finish_cancelled_processing(resume_id, token))
+    caller = asyncio.create_task(resumes._finish_cancelled_processing(resume_id, token, LOCAL_USER_ID))
     await entered.wait()
     for _ in range(3):
         caller.cancel()
@@ -89,7 +90,7 @@ async def test_late_claim_is_retired_after_cancelled_caller_returns(
         return token
 
     monkeypatch.setattr(isolated_db, "claim_resume_processing", stalled)
-    caller = asyncio.create_task(resumes._claim_processing(resume_id))
+    caller = asyncio.create_task(resumes._claim_processing(resume_id, user_id=LOCAL_USER_ID))
     await entered.wait()
     caller.cancel()
     completed, _ = await asyncio.wait({caller}, timeout=0.15)

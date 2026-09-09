@@ -3,8 +3,9 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.auth import AuthUser, get_current_user, get_current_writer
 from app.database import DatabaseBusyError, db
 from app.services.improver import extract_job_keywords
 from app.schemas import (
@@ -42,10 +43,12 @@ def _group_by_status(applications: list[dict[str, Any]]) -> dict[str, list[Appli
 
 
 @router.get("", response_model=ApplicationListResponse)
-async def list_applications() -> ApplicationListResponse:
-    """List all applications grouped by status column."""
+async def list_applications(
+    user: AuthUser = Depends(get_current_user),
+) -> ApplicationListResponse:
+    """List the caller's applications grouped by status column."""
     try:
-        applications = await db.list_applications()
+        applications = await db.list_applications(user_id=user.id)
     except DatabaseBusyError:
         raise
     except Exception as e:
@@ -55,7 +58,10 @@ async def list_applications() -> ApplicationListResponse:
 
 
 @router.post("", response_model=ApplicationResponse)
-async def create_application(request: ManualApplicationCreate) -> ApplicationResponse:
+async def create_application(
+    request: ManualApplicationCreate,
+    user: AuthUser = Depends(get_current_writer),
+) -> ApplicationResponse:
     """Manually add a card from a pasted job description.
 
     Runs best-effort company/role extraction before opening a transaction, then
@@ -76,6 +82,7 @@ async def create_application(request: ManualApplicationCreate) -> ApplicationRes
             company=company,
             role=role,
             notes=request.notes,
+            user_id=user.id,
         )
     except DatabaseBusyError:
         raise
@@ -90,22 +97,25 @@ async def create_application(request: ManualApplicationCreate) -> ApplicationRes
 
 
 @router.get("/{application_id}", response_model=ApplicationDetailResponse)
-async def get_application_detail(application_id: str) -> ApplicationDetailResponse:
+async def get_application_detail(
+    application_id: str,
+    user: AuthUser = Depends(get_current_user),
+) -> ApplicationDetailResponse:
     """Get a card with its embedded JD and applied resume (one round-trip).
 
     Tolerates a deleted resume by returning ``resume: null`` rather than 500.
     """
-    application = await db.get_application(application_id)
+    application = await db.get_application(application_id, user_id=user.id)
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
     job_content: str | None = None
     resume: dict[str, Any] | None = None
     try:
-        job = await db.get_job(application["job_id"])
+        job = await db.get_job(application["job_id"], user_id=user.id)
         if job:
             job_content = job.get("content")
-        resume = await db.get_resume(application["resume_id"])
+        resume = await db.get_resume(application["resume_id"], user_id=user.id)
     except DatabaseBusyError:
         raise
     except Exception as e:
@@ -116,10 +126,15 @@ async def get_application_detail(application_id: str) -> ApplicationDetailRespon
 
 
 @router.patch("/bulk", response_model=ApplicationActionResponse)
-async def bulk_update_applications(request: BulkStatusUpdate) -> ApplicationActionResponse:
-    """Move many cards to one column."""
+async def bulk_update_applications(
+    request: BulkStatusUpdate,
+    user: AuthUser = Depends(get_current_writer),
+) -> ApplicationActionResponse:
+    """Move many of the caller's cards to one column."""
     try:
-        moved = await db.bulk_update_applications(request.application_ids, request.status.value)
+        moved = await db.bulk_update_applications(
+            request.application_ids, request.status.value, user_id=user.id
+        )
     except DatabaseBusyError:
         raise
     except Exception as e:
@@ -129,14 +144,18 @@ async def bulk_update_applications(request: BulkStatusUpdate) -> ApplicationActi
 
 
 @router.patch("/{application_id}", response_model=ApplicationResponse)
-async def update_application(application_id: str, request: ApplicationUpdate) -> ApplicationResponse:
+async def update_application(
+    application_id: str,
+    request: ApplicationUpdate,
+    user: AuthUser = Depends(get_current_writer),
+) -> ApplicationResponse:
     """Update a card (status/position/notes/company/role/applied_at)."""
     updates = request.model_dump(exclude_unset=True)
     # Normalize the enum to its stable string value for the data layer.
     if "status" in updates and updates["status"] is not None:
         updates["status"] = request.status.value
     try:
-        updated = await db.update_application(application_id, updates)
+        updated = await db.update_application(application_id, updates, user_id=user.id)
     except DatabaseBusyError:
         raise
     except Exception as e:
@@ -148,10 +167,13 @@ async def update_application(application_id: str, request: ApplicationUpdate) ->
 
 
 @router.delete("/{application_id}", response_model=ApplicationActionResponse)
-async def delete_application(application_id: str) -> ApplicationActionResponse:
-    """Delete a card."""
+async def delete_application(
+    application_id: str,
+    user: AuthUser = Depends(get_current_writer),
+) -> ApplicationActionResponse:
+    """Delete one of the caller's cards."""
     try:
-        deleted = await db.delete_application(application_id)
+        deleted = await db.delete_application(application_id, user_id=user.id)
     except DatabaseBusyError:
         raise
     except Exception as e:
@@ -163,10 +185,15 @@ async def delete_application(application_id: str) -> ApplicationActionResponse:
 
 
 @router.post("/bulk-delete", response_model=ApplicationActionResponse)
-async def bulk_delete_applications(request: BulkDelete) -> ApplicationActionResponse:
-    """Delete many cards."""
+async def bulk_delete_applications(
+    request: BulkDelete,
+    user: AuthUser = Depends(get_current_writer),
+) -> ApplicationActionResponse:
+    """Delete many of the caller's cards."""
     try:
-        deleted = await db.bulk_delete_applications(request.application_ids)
+        deleted = await db.bulk_delete_applications(
+            request.application_ids, user_id=user.id
+        )
     except DatabaseBusyError:
         raise
     except Exception as e:

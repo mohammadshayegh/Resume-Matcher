@@ -4,6 +4,13 @@ A single declarative ``Base`` backs all tables (doc tables migrated from
 TinyDB plus the new ``applications`` and ``api_keys`` tables). The facade in
 ``app/database.py`` converts ORM rows to plain dicts so the rest of the app
 never sees ORM objects — preserving the TinyDB-era contracts.
+
+Every user-owned table carries a ``user_id`` partition key holding the Supabase
+user id (or ``app.auth.LOCAL_USER_ID`` when authentication is disabled). It is
+never exposed to clients: the facade strips it from the dicts it returns, and
+callers pass the caller's id in explicitly. ``api_keys`` deliberately has no
+``user_id`` — LLM credentials and provider config are operator-owned and shared
+by the whole deployment.
 """
 
 from datetime import datetime, timezone
@@ -11,6 +18,13 @@ from typing import Any
 
 from sqlalchemy import JSON, Boolean, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# The ``user_id`` every row is attributed to when Supabase authentication is
+# not configured (single-user local mode). Defined here, in the leaf module the
+# data layer and the auth layer both already depend on, so the engine
+# migration, the query facade and ``app.auth`` all agree by construction.
+# Deliberately not a UUID: it can never collide with a real Supabase user id.
+LOCAL_USER_ID = "local"
 
 
 def _utcnow_iso() -> str:
@@ -33,6 +47,7 @@ class Resume(Base):
     __tablename__ = "resumes"
 
     resume_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
     content: Mapped[str] = mapped_column(Text)
     content_type: Mapped[str] = mapped_column(String, default="md")
     filename: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -53,11 +68,12 @@ class Resume(Base):
     updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
 
     __table_args__ = (
-        # At most one master resume. Partial unique index enforces the invariant
-        # at the storage layer; the facade serializes compound designation
-        # changes with a SQLite writer transaction.
+        # At most one master resume **per user**. The partial unique index
+        # enforces the invariant at the storage layer; the facade serializes
+        # compound designation changes with a SQLite writer transaction.
         Index(
-            "ux_resumes_single_master",
+            "ux_resumes_single_master_per_user",
+            "user_id",
             "is_master",
             unique=True,
             sqlite_where=text("is_master = 1"),
@@ -78,6 +94,7 @@ class Job(Base):
     __tablename__ = "jobs"
 
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
     content: Mapped[str] = mapped_column(Text)
     resume_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
@@ -90,6 +107,7 @@ class Improvement(Base):
     __tablename__ = "improvements"
 
     request_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
     original_resume_id: Mapped[str] = mapped_column(String)
     tailored_resume_id: Mapped[str] = mapped_column(String, index=True)
     job_id: Mapped[str] = mapped_column(String)
@@ -101,11 +119,21 @@ class TailoringPreview(Base):
     """An accepted preview, bounded confirmation claim and immutable result."""
 
     __tablename__ = "tailoring_previews"
-    __table_args__ = (Index("ix_preview_compatibility", "source_id", "job_id", "payload_hash", "created_at"),)
+    __table_args__ = (
+        Index(
+            "ix_preview_compatibility",
+            "user_id",
+            "source_id",
+            "job_id",
+            "payload_hash",
+            "created_at",
+        ),
+    )
 
     improvements: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     preview_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
     source_id: Mapped[str] = mapped_column(String, index=True)
     job_id: Mapped[str] = mapped_column(String, index=True)
     payload_hash: Mapped[str] = mapped_column(String)
@@ -126,12 +154,17 @@ class Application(Base):
 
     __tablename__ = "applications"
     __table_args__ = (
-        # Concurrency-safe dedupe: a card is unique per (job, applied resume).
-        # The app-level select-then-insert relies on this to collapse races.
-        UniqueConstraint("job_id", "resume_id", name="uq_application_job_resume"),
+        # Concurrency-safe dedupe: a card is unique per (user, job, applied
+        # resume). The app-level select-then-insert relies on this to collapse
+        # races. ``user_id`` is part of the key so two accounts that happen to
+        # reference the same ids can each hold their own card.
+        UniqueConstraint(
+            "user_id", "job_id", "resume_id", name="uq_application_user_job_resume"
+        ),
     )
 
     application_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
     job_id: Mapped[str] = mapped_column(String, index=True)
     # The applied/tailored resume shown in the modal and opened by "Edit".
     resume_id: Mapped[str] = mapped_column(String, index=True)
@@ -153,6 +186,10 @@ class ApiKey(Base):
     ``provider`` is the *key-store* provider name (e.g. ``google`` for the
     ``gemini`` LLM provider, via ``_PROVIDER_KEY_MAP``). Only ciphertext is
     stored; plaintext exists in memory only at call time.
+
+    Deliberately **not** partitioned by user: the LLM provider, model and
+    credentials are operator-owned deployment configuration, shared by every
+    account (see ``docs/agent/features/authentication.md``).
     """
 
     __tablename__ = "api_keys"

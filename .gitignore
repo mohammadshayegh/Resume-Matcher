@@ -115,6 +115,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the templates are documentation and must be committable. The backend's
+# is already tracked; this keeps the frontend's from being silently ignored.
+!.env.example
 
 # vercel
 .vercel

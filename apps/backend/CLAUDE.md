@@ -79,6 +79,7 @@ Prompts are **plain Python string constants** — no Jinja, no external prompt f
 ## LLM Integration (`app/llm.py`)
 
 - **Provider abstraction:** LiteLLM. Providers: `openai`, `openai_compatible` (llama.cpp/vLLM/LM Studio), `anthropic`, `openrouter`, `gemini`, `deepseek`, `groq`, `ollama`. `get_model_name()` maps provider→LiteLLM prefix; `_normalize_api_base()` fixes `/v1/v1` duplication per provider.
+- **`codex` provider bypasses LiteLLM entirely** (`app/codex_cli.py`): the Codex CLI is a child process (`codex exec --json`), not an endpoint, and holds its own auth in `$CODEX_HOME`. It ignores `LLM_API_KEY`/`LLM_API_BASE`/`LLM_MODEL` (its model is `CODEX_MODEL`), has no Router/transport retries and no JSON mode, and `max_tokens` is unenforced. Consumption + remaining quota surface via `GET /config/ai-usage` (quota is parsed out of Codex's own session rollout files). See [`llm-integration.md`](../../docs/agent/llm-integration.md).
 - **Router:** a cached `litellm.Router` (`get_router`) rebuilt only when a config fingerprint changes. `num_retries=3` with a `RetryPolicy` (auth/bad-request/content-policy = 0 retries; timeout/500 = 2; rate-limit = 3). Cooldowns disabled (single deployment). **Transport retries live in the Router; do not re-retry them in callers.**
 - **`complete()` / `complete_json()`:** `complete_json` adds app-level *content-quality* retries (malformed JSON, truncation) with temperature escalation and a JSON-mode→prompt-only fallback. JSON is parsed by the brace-balancing `_extract_json`; `_appears_truncated` is `schema_type`-aware (`resume`/`enrichment`/`diff`/`keywords`).
 - **Capabilities via registry, not hardcoded:** `_supports_json_mode`, `_supports_temperature`, `get_safe_max_tokens` query `litellm.get_model_info` (with Ollama/local fallbacks). `litellm.drop_params = True` lets unsupported params (e.g. `reasoning_effort`) be dropped silently.
@@ -135,6 +136,7 @@ Config via `.env` (see `.env.example`). Interactive API docs at `/docs`.
 | Topic | Doc |
 |-------|-----|
 | Project orientation | [`docs/agent/README.md`](../../docs/agent/README.md) |
+| **Auth / per-user scoping** | [`features/authentication.md`](../../docs/agent/features/authentication.md) — read before touching `app/auth.py`, `app/database.py` or any router |
 | Backend architecture / modules | [`backend-guide.md`](../../docs/agent/architecture/backend-guide.md) · [`backend-architecture.md`](../../docs/agent/architecture/backend-architecture.md) |
 | LLM / multi-provider | [`llm-integration.md`](../../docs/agent/llm-integration.md) |
 | Prompt pipeline (diff/retry design) | [`prompt-workflow-design.md`](../../docs/agent/architecture/prompt-workflow-design.md) |

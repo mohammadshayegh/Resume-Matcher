@@ -10,6 +10,8 @@ crashing — the user is prompted to re-enter, and stored ciphertext is never
 recoverable without the original secret.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 import tempfile
@@ -109,6 +111,27 @@ def reset_cache() -> None:
     global _fernet, _loaded_from
     _fernet = None
     _loaded_from = None
+
+
+def derive_key(purpose: str) -> bytes:
+    """Derive a 32-byte key for ``purpose`` from the at-rest secret.
+
+    Lets non-Fernet consumers (currently the HMAC that signs PDF print tokens)
+    reuse the same auto-generated, 0600, gitignored ``data/.secret_key``
+    without ever handling the Fernet key itself. Distinct purposes yield
+    unrelated keys, so a token signer can never be used to forge ciphertext.
+
+    Because the secret is generated per deployment, rotating or losing it
+    invalidates outstanding print tokens — which is harmless: they live for
+    minutes and are reissued on the next render.
+    """
+    # Load first: it generates the secret on a fresh install (and repairs a
+    # corrupt one), so the file is guaranteed present and valid afterwards.
+    _load_fernet()
+    secret = _secret_path().read_bytes().strip()
+    return hmac.new(
+        secret, f"resume-matcher/{purpose}/v1".encode("utf-8"), hashlib.sha256
+    ).digest()
 
 
 def encrypt(plaintext: str) -> str:

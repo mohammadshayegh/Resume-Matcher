@@ -2,10 +2,11 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.auth import AuthUser, get_current_user
 from app.database import db
-from app.llm import check_llm_health, get_llm_config
+from app.llm import check_llm_health, get_llm_config, PROVIDERS_WITHOUT_API_KEY
 from app.schemas import HealthResponse, StatusResponse
 
 logger = logging.getLogger(__name__)
@@ -26,14 +27,21 @@ _EMPTY_DB_STATS = {
 async def health_check() -> HealthResponse:
     """Lightweight liveness check for Docker HEALTHCHECK.
 
-    Does NOT call the LLM provider. Use GET /status for full LLM health.
+    Deliberately **unauthenticated**: the container orchestrator has no
+    Supabase session, and the response carries no user data. Does NOT call the
+    LLM provider. Use GET /status for full LLM health.
     """
     return HealthResponse(status="healthy")
 
 
 @router.get("/status", response_model=StatusResponse)
-async def get_status() -> StatusResponse:
-    """Get comprehensive application status.
+async def get_status(
+    user: AuthUser = Depends(get_current_user),
+) -> StatusResponse:
+    """Get comprehensive application status for the calling user.
+
+    Requires authentication, unlike ``/health``: ``database_stats`` and
+    ``has_master_resume`` describe the caller's own data.
 
     Each subsystem check is isolated: a failure in the LLM health probe or the
     database stats query degrades only its own field instead of 500-ing the
@@ -43,8 +51,11 @@ async def get_status() -> StatusResponse:
     llm_healthy = False
     try:
         config = get_llm_config()
-        # ollama / openai_compatible run without a key, matching check_llm_health.
-        llm_configured = bool(config.api_key) or config.provider in ("ollama", "openai_compatible")
+        # Local servers and the Codex CLI run without an app-held key, matching
+        # check_llm_health (Codex authenticates via its own CODEX_HOME store).
+        llm_configured = (
+            bool(config.api_key) or config.provider in PROVIDERS_WITHOUT_API_KEY
+        )
         llm_status = await check_llm_health(config)
         llm_healthy = bool(llm_status.get("healthy"))
     except Exception:
@@ -52,7 +63,7 @@ async def get_status() -> StatusResponse:
 
     db_stats: dict = dict(_EMPTY_DB_STATS)
     try:
-        db_stats = await db.get_stats()
+        db_stats = await db.get_stats(user_id=user.id)
     except Exception:
         logger.exception("Status: database stats failed")
 

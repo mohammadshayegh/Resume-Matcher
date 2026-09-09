@@ -2,13 +2,25 @@
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from starlette.concurrency import run_in_threadpool
 
+from app.auth import AuthUser, get_current_user, get_current_writer
 from app.config import settings
-from app.llm import check_llm_health, LLMConfig, resolve_api_key
+from app import codex_cli
+from app.codex_cli import CODEX_PROVIDER
+from app.llm import (
+    check_llm_health,
+    get_llm_config,
+    LLMConfig,
+    resolve_api_key,
+    resolve_model,
+)
 from app.schemas import (
+    AiUsageResponse,
     LLMConfigRequest,
     LLMConfigResponse,
     FeatureConfigRequest,
@@ -24,7 +36,9 @@ from app.schemas import (
     ApiKeyStatusResponse,
     ApiKeysUpdateRequest,
     ApiKeysUpdateResponse,
+    QuotaSnapshot,
     ResetDatabaseRequest,
+    TokenUsage,
 )
 from app.prompts import (
     DEFAULT_IMPROVE_PROMPT_ID,
@@ -62,7 +76,16 @@ def _effective_api_base(stored: dict) -> str | None:
     """
     return stored.get("api_base") or settings.llm_api_base or None
 
-router = APIRouter(prefix="/config", tags=["Configuration"])
+# Every configuration endpoint requires a signed-in caller. The LLM provider,
+# model and credentials are *operator-owned* and shared by the whole
+# deployment (see app/models.py::ApiKey) — shared does not mean public, so an
+# anonymous visitor must not be able to read or rewrite them. Endpoints that
+# act on the caller's own data (``/reset``) additionally take the user.
+router = APIRouter(
+    prefix="/config",
+    tags=["Configuration"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _get_config_path() -> Path:
@@ -120,7 +143,7 @@ async def get_llm_config_endpoint() -> LLMConfigResponse:
     reasoning_effort = stored.get("reasoning_effort", settings.reasoning_effort)
     return LLMConfigResponse(
         provider=provider,
-        model=stored.get("model", settings.llm_model),
+        model=resolve_model(stored, provider),
         api_key=_mask_api_key(resolve_api_key(stored, provider)),
         api_base=_effective_api_base(stored),
         reasoning_effort=reasoning_effort or None,
@@ -191,7 +214,7 @@ async def update_llm_config(
     resolved_reasoning_effort = raw_re if raw_re else None
     test_config = LLMConfig(
         provider=resolved_provider,
-        model=stored.get("model", settings.llm_model),
+        model=resolve_model(stored, resolved_provider),
         api_key=resolve_api_key(stored, resolved_provider),
         api_base=_effective_api_base(stored),
         reasoning_effort=resolved_reasoning_effort,
@@ -232,7 +255,7 @@ async def test_llm_connection(request: LLMConfigRequest | None = None) -> dict:
         model=(
             request.model
             if request and request.model
-            else stored.get("model", settings.llm_model)
+            else resolve_model(stored, test_provider)
         ),
         api_key=(
             request.api_key
@@ -253,6 +276,72 @@ async def test_llm_connection(request: LLMConfigRequest | None = None) -> dict:
 
     test_prompt = "Hi"
     return await check_llm_health(config, include_details=True, test_prompt=test_prompt)
+
+
+def _codex_cli_version() -> str | None:
+    """Return the installed Codex CLI version, or None if it cannot be read.
+
+    Deliberately best-effort: this is a display field on a status panel, so a
+    missing binary or a slow/odd `--version` must degrade to "unknown" rather
+    than fail the request.
+    """
+    binary = codex_cli.codex_binary()
+    if binary is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed, resolved executable
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+@router.get("/ai-usage", response_model=AiUsageResponse)
+async def get_ai_usage() -> AiUsageResponse:
+    """Report the active AI backend plus its consumption and remaining quota.
+
+    Read-only by design: this deployment's provider and model are set by server
+    configuration, so the Settings page reports them instead of offering a
+    choice. Token counters are per-worker-process and reset on restart; quota
+    is whatever the provider last reported (Codex only — LiteLLM providers
+    expose no allowance endpoint, so ``quota`` is null for them).
+    """
+    config = get_llm_config()
+    is_cli = config.provider == CODEX_PROVIDER
+
+    response = AiUsageResponse(
+        provider=config.provider,
+        model=config.model,
+        reasoning_effort=config.reasoning_effort,
+        is_cli_provider=is_cli,
+    )
+    if not is_cli:
+        return response
+
+    snapshot = codex_cli.usage_snapshot()
+    # Quota lives in the CLI's session rollout on disk; keep that read (and the
+    # `--version` probe) off the event loop.
+    version = await run_in_threadpool(_codex_cli_version)
+    quota = await run_in_threadpool(
+        codex_cli.read_rate_limits, snapshot["last_thread_id"]
+    )
+
+    response.cli_available = codex_cli.codex_binary() is not None
+    response.cli_authenticated = codex_cli.is_authenticated()
+    response.cli_version = version
+    response.calls = snapshot["calls"]
+    last_usage = snapshot["last_usage"]
+    response.last_usage = TokenUsage(**last_usage) if last_usage else None
+    response.session_totals = TokenUsage(**snapshot["session_totals"])
+    response.quota = QuotaSnapshot(**quota) if quota else None
+    return response
 
 
 @router.get("/features", response_model=FeatureConfigResponse)
@@ -647,29 +736,32 @@ async def delete_api_key(provider: str) -> dict:
 
 
 @router.post("/reset")
-async def reset_database_endpoint(request: ResetDatabaseRequest) -> dict:
-    """Reset the database and clear all data.
+async def reset_database_endpoint(
+    request: ResetDatabaseRequest,
+    user: AuthUser = Depends(get_current_writer),
+) -> dict:
+    """Reset **the calling user's** data.
 
     WARNING: This action is irreversible. It will:
-    1. Truncate all database tables (resumes, jobs, improvements)
-    2. Delete all uploaded files
+    1. Delete all of the caller's resumes, jobs, improvements, previews and
+       tracker cards
+    2. Delete their uploaded files
+
+    Other accounts are untouched, and the shared LLM credentials are preserved.
 
     Requires confirmation token for safety.
 
     Args:
         request: Request body containing confirmation token
+        user: The authenticated caller whose data is reset
 
     Returns:
         Success message
-
-    Note:
-        This is a local-only endpoint for single-user deployments.
-        In production/multi-user scenarios, add proper authentication.
     """
     if request.confirm != "RESET_ALL_DATA":
         raise HTTPException(
             status_code=400,
             detail="Confirmation required. Pass confirm=RESET_ALL_DATA in request body.",
         )
-    await db.reset_database()
+    await db.reset_database(user_id=user.id)
     return {"message": "Database and all data have been reset successfully"}

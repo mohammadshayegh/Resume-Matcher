@@ -127,9 +127,9 @@ async def test_concurrent_creates_allocate_distinct_contiguous_positions(
     original = isolated_db._next_position
     counted = 0
 
-    async def hold_allocation(session: Any, status: str) -> int:
+    async def hold_allocation(session: Any, status: str, user_id: str) -> int:
         nonlocal counted
-        position = await original(session, status)
+        position = await original(session, status, user_id)
         counted += 1
         first_counted.set()
         if counted == 8:
@@ -198,8 +198,8 @@ async def test_create_move_and_bulk_delete_share_column_ordering(
     release = asyncio.Event()
     original = isolated_db._next_position
 
-    async def hold_create(session: Any, status: str) -> int:
-        position = await original(session, status)
+    async def hold_create(session: Any, status: str, user_id: str) -> int:
+        position = await original(session, status, user_id)
         counted.set()
         await release.wait()
         return position

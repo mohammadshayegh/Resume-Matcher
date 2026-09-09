@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from app.auth import AuthUser
 from app.config import settings
 from app.main import app
 from app.routers import enrichment, resumes, resume_wizard
@@ -185,7 +186,11 @@ async def test_regeneration_limits_active_workers_and_keeps_item_failures(
     request = RegenerateRequest(
         resume_id="r", items=[item(i) for i in range(10)], instruction="Clarify"
     )
-    task = asyncio.create_task(enrichment.regenerate_items(request))
+    # Called directly rather than through the ASGI app, so FastAPI never
+    # resolves the handler's Depends(get_current_user) — supply the user here.
+    task = asyncio.create_task(
+        enrichment.regenerate_items(request, user=AuthUser(id="test-user"))
+    )
     await asyncio.wait_for(ready.wait(), 1)
     await asyncio.sleep(0)
     release.set()

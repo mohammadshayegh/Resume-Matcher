@@ -286,11 +286,31 @@ class Settings(BaseSettings):
         "deepseek",
         "groq",
         "ollama",
+        "codex",
     ] = "openai"
     llm_model: str = "gpt-5-nano-2025-08-07"
     llm_api_key: str = ""
     llm_api_base: str | None = None  # For Ollama or custom endpoints
     log_llm: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "WARNING"
+
+    # ------------------------------------------------------------------
+    # Codex CLI provider (LLM_PROVIDER=codex)
+    #
+    # The Codex CLI is a local subprocess, not an HTTP endpoint: it owns its
+    # own auth (CODEX_HOME/auth.json) and its own model catalog, so it uses
+    # none of the api_key / api_base / llm_model settings above. Its model is
+    # kept separate because the LiteLLM default (`gpt-5-nano-...`) is not a
+    # valid Codex slug, and sharing one field would make switching providers
+    # silently produce an unusable configuration.
+    # ------------------------------------------------------------------
+    codex_binary: str = "codex"
+    codex_model: str = "gpt-5.6-luna"
+    #: Overrides CODEX_HOME for credential/session lookup. Blank = inherit the
+    #: environment, else ~/.codex.
+    codex_home: str = ""
+    #: Workspace Codex runs in (read-only sandbox). Blank = an empty scratch
+    #: directory under `data/`, so project files never enter a prompt.
+    codex_workdir: str = ""
 
     @field_validator("llm_provider", mode="before")
     @classmethod
@@ -373,6 +393,67 @@ class Settings(BaseSettings):
         if value not in ALLOWED_LOG_LEVELS:
             raise ValueError(f"Invalid LOG_LEVEL: {value}. Allowed: {ALLOWED_LOG_LEVELS}")
         return value
+
+    # ------------------------------------------------------------------
+    # Supabase authentication (Google OAuth only)
+    # ------------------------------------------------------------------
+    # Auth identity is owned entirely by Supabase. The backend never stores
+    # users, passwords or Google credentials: it only *verifies* the access
+    # token Supabase issued and reads the user id out of it. Application data
+    # stays in local SQLite, partitioned by that user id.
+    #
+    # supabase_url          — project URL, e.g. https://abcxyz.supabase.co
+    # supabase_jwt_secret   — legacy HS256 signing secret (Project Settings →
+    #                         API → JWT Settings). Only needed for projects
+    #                         still on symmetric keys.
+    # supabase_jwks_url     — override the JWKS endpoint; derived from
+    #                         supabase_url when blank. Used for projects on
+    #                         asymmetric keys (ES256/RS256), the current default
+    #                         for new Supabase projects.
+    supabase_url: str = ""
+    supabase_jwt_secret: str = ""
+    supabase_jwks_url: str = ""
+
+    # Refuse to start unauthenticated. Leave false for single-user local
+    # development (no Supabase project needed); set true for any deployment
+    # that is reachable by more than one person, so a missing/blank Supabase
+    # setting fails loudly at startup instead of silently serving one shared
+    # data partition to everybody.
+    auth_required: bool = False
+
+    # Lifetime of the single-purpose token that lets the headless-Chromium PDF
+    # renderer read one resume back through the API. Short by design: it only
+    # has to survive one render.
+    print_token_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+
+    @field_validator("supabase_url", "supabase_jwt_secret", "supabase_jwks_url", mode="before")
+    @classmethod
+    def strip_supabase_setting(cls, v: Any) -> str:
+        """Treat a blank/whitespace env var as unset rather than configured."""
+        if v is None:
+            return ""
+        return str(v).strip().rstrip("/") if isinstance(v, str) else str(v)
+
+    @property
+    def effective_supabase_jwks_url(self) -> str:
+        """JWKS endpoint for asymmetric Supabase keys ("" when unavailable)."""
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url}/auth/v1/.well-known/jwks.json"
+        return ""
+
+    @property
+    def auth_enabled(self) -> bool:
+        """True once a Supabase project is configured.
+
+        Configuring ``SUPABASE_URL`` is the deliberate act that switches the
+        app from single-user local mode into multi-user mode. ``AUTH_REQUIRED``
+        turns a missing configuration into a startup failure (see
+        ``app.auth.assert_auth_configuration``) so a deployment can never fall
+        back to the unauthenticated path by accident.
+        """
+        return bool(self.supabase_url)
 
     # CORS Configuration
     cors_origins: list[str] = [

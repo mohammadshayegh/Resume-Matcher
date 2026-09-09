@@ -96,6 +96,12 @@ updateLlmConfig(config: LLMConfigUpdate) → LLMConfig
 testLlmConnection() → LLMHealthCheck
 fetchSystemStatus() → SystemStatus
 
+// Active AI backend, read-only: consumption + remaining quota
+// (GET /config/ai-usage). Token counters are per backend worker process and
+// reset on restart. `quota` is non-null only for providers that report an
+// allowance (currently the Codex CLI); it is null for LiteLLM providers.
+fetchAiUsage() → AiUsage
+
 // Per-provider API keys (encrypted server-side; switching the active
 // provider no longer wipes another provider's key — responses always masked)
 fetchApiKeyStatus() → ApiKeyStatusResponse           // { providers: [{ provider, configured, masked_key }] }
@@ -114,9 +120,13 @@ updateLanguageConfig(language: string) → LanguageConfig
 
 > `updateLlmApiKey` (`PUT /config/llm-api-key`) no longer persists a key — keys are managed per-provider via the encrypted `/config/api-keys` endpoints above.
 
+> The Settings page consumes `fetchLlmConfig` / `fetchAiUsage` / `testLlmConnection` **read-only**: provider, model and keys are server-side configuration for a deployment, so the page reports status, consumption and quota instead of offering a provider/key form. `updateLlmConfig` and the `/config/api-keys` endpoints remain for `.env`-driven and scripted setup.
+
 ## Provider Info
 
 ```typescript
+// `codex` is a local subprocess provider: it holds its own credentials, so it
+// declares neither a key nor a base URL. See docs/agent/llm-integration.md.
 export const PROVIDER_INFO = {
   openai: {
     name: 'OpenAI',
