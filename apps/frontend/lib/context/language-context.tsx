@@ -6,6 +6,7 @@ import {
   updateLanguageConfig,
   type SupportedLanguage,
 } from '@/lib/api/config';
+import { canCallAuthenticatedApi } from '@/lib/supabase/session';
 import { locales, defaultLocale, localeNames, type Locale } from '@/i18n/config';
 
 const CONTENT_STORAGE_KEY = 'resume_matcher_content_language';
@@ -53,7 +54,14 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
           setContentLanguageState(cachedContentLang as SupportedLanguage);
         }
 
-        // Then fetch content language from backend to ensure sync
+        // Then sync the content language with the backend — but only when
+        // there is a session to authenticate with. The public landing page
+        // mounts this provider too, and an unauthenticated call would 401 on
+        // every visit. The cached/default value above is the right answer for
+        // a signed-out visitor anyway.
+        if (!(await canCallAuthenticatedApi())) {
+          return;
+        }
         const config = await fetchLanguageConfig();
         if (config.content_language && locales.includes(config.content_language as Locale)) {
           setContentLanguageState(config.content_language);

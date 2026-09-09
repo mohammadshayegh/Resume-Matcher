@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { fetchSystemStatus, type SystemStatus } from '@/lib/api/config';
+import { canCallAuthenticatedApi } from '@/lib/supabase/session';
 
 // Cache duration constants
 const LLM_HEALTH_CHECK_INTERVAL = 30 * 60 * 1000; // 30 minutes
@@ -175,10 +176,18 @@ export function StatusCacheProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
-  // Initial fetch on mount
+  // Initial fetch on mount.
+  //
+  // Skipped when signed out: /status is authenticated and reports the caller's
+  // own data, and the public landing page mounts this provider. Firing it
+  // anonymously would 401 on every visit and surface as a spurious error.
   useEffect(() => {
     mountedRef.current = true;
-    refreshStatus();
+    void canCallAuthenticatedApi().then((allowed) => {
+      if (allowed && mountedRef.current) {
+        refreshStatus();
+      }
+    });
 
     return () => {
       mountedRef.current = false;

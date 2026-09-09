@@ -15,6 +15,23 @@
 export const DEFAULT_SIGNED_IN_PATH = '/dashboard';
 
 /**
+ * Where to send an already-signed-in visitor, or `null` to leave them be.
+ *
+ * The sign-in screen and the landing page both exist to get someone *into* the
+ * app; for a visitor who is already in, they are dead ends. Every other route
+ * is left alone.
+ *
+ * Extracted from the middleware so the rule is testable without standing up a
+ * Supabase session.
+ */
+export function signedInRedirectTarget(pathname: string): string | null {
+  if (pathname === '/login' || pathname === '/') {
+    return DEFAULT_SIGNED_IN_PATH;
+  }
+  return null;
+}
+
+/**
  * Returns `raw` if it is a safe in-app path, otherwise the default landing
  * page.
  *

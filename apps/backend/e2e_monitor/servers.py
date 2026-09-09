@@ -134,6 +134,18 @@ class Servers:
                 "LLM_API_BASE": selected.api_base or "",
                 "REASONING_EFFORT": selected.reasoning_effort or "",
                 "FRONTEND_BASE_URL": self.frontend_url,
+                # Run the child in single-user mode regardless of the repo's
+                # .env. The monitor drives the API directly with no browser and
+                # no Supabase session, so an auth-enabled backend would 401
+                # every stage. Set explicitly rather than omitted: the child
+                # runs with cwd=apps/backend and would otherwise read
+                # SUPABASE_URL straight out of the developer's .env file.
+                # Its data lives in this run's throwaway DATA_DIR, so there is
+                # nothing here for auth to protect.
+                "SUPABASE_URL": "",
+                "SUPABASE_JWT_SECRET": "",
+                "SUPABASE_JWKS_URL": "",
+                "AUTH_REQUIRED": "false",
                 "NO_PROXY": ",".join(filter(None, [os.environ.get("NO_PROXY", os.environ.get("no_proxy", "")), "127.0.0.1", "localhost"])),
             }
         )

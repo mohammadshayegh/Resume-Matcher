@@ -21,6 +21,27 @@ _TEST_DATA_DIR_CONTEXT = tempfile.TemporaryDirectory(prefix="resume-matcher-test
 _TEST_DATA_DIR = Path(_TEST_DATA_DIR_CONTEXT.name)
 os.environ["DATA_DIR"] = str(_TEST_DATA_DIR)
 
+# Pin authentication OFF for the same reason DATA_DIR is pinned above: Settings
+# reads apps/backend/.env, so a developer who has configured Supabase would
+# otherwise run the whole suite in multi-user mode and see every endpoint test
+# fail with 401. Whether the suite passes must not depend on whose machine it
+# is on.
+#
+# Set to "" rather than deleted: an environment variable takes precedence over
+# the .env file, and deleting the key would let the file's value through.
+# Tests that need auth ENABLED turn it on per-test by monkeypatching
+# ``settings`` (see tests/unit/test_auth.py and
+# tests/integration/test_auth_enforcement.py).
+_AUTH_ENV_KEYS = (
+    "SUPABASE_URL",
+    "SUPABASE_JWT_SECRET",
+    "SUPABASE_JWKS_URL",
+    "AUTH_REQUIRED",
+)
+_ORIGINAL_AUTH_ENV = {key: os.environ.get(key) for key in _AUTH_ENV_KEYS}
+for _key in _AUTH_ENV_KEYS:
+    os.environ[_key] = "" if _key != "AUTH_REQUIRED" else "false"
+
 import app.config as _config_module  # noqa: E402 - DATA_DIR must be set first
 
 _IMPORTED_CONFIG_FILE_PATH = _config_module.CONFIG_FILE_PATH
@@ -37,6 +58,11 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         os.environ.pop("DATA_DIR", None)
     else:
         os.environ["DATA_DIR"] = _ORIGINAL_DATA_DIR
+    for key, original in _ORIGINAL_AUTH_ENV.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
     _TEST_DATA_DIR_CONTEXT.cleanup()
 
 

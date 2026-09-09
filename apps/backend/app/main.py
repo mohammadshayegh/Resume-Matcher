@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.ai_budget import operation_error_content
-from app.auth import assert_auth_configuration
+from app.auth import AuthenticationMiddleware, assert_auth_configuration
 from app.config import settings
 from app.database import DatabaseBusyError, db
 from app.pdf import close_pdf_renderer, init_pdf_renderer
@@ -101,6 +101,19 @@ async def database_busy_handler(request: Request, error: DatabaseBusyError) -> J
         headers={"Retry-After": "1"},
     )
 
+
+# Authentication enforcement.
+#
+# Added BEFORE the CORS middleware so CORS ends up OUTERMOST (add_middleware
+# prepends, so the last one added wraps the rest). A 401 produced here is then
+# still given CORS headers — otherwise a browser reports an opaque network
+# error instead of the actual 401, making a plain auth failure look like the
+# backend is down.
+#
+# This is the interceptor that makes authentication the default: every path
+# except app.auth.PUBLIC_PATHS needs a valid token, whether or not the route
+# declares a dependency. See docs/agent/features/authentication.md.
+app.add_middleware(AuthenticationMiddleware)
 
 # CORS middleware - origins configurable via CORS_ORIGINS env var
 app.add_middleware(

@@ -21,6 +21,7 @@ import {
   SUPABASE_ANON_KEY,
   SUPABASE_URL,
 } from './config';
+import { signedInRedirectTarget } from './redirect';
 
 /**
  * Whether a path may be reached without a session.
@@ -34,7 +35,11 @@ export function isPublicPath(pathname: string): boolean {
     // authenticates with a scoped print token instead. See config.ts.
     return true;
   }
-  return PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  return PUBLIC_ROUTES.some(
+    // '/' is matched exactly: the `${route}/` prefix form would otherwise make
+    // every path in the app public.
+    (route) => pathname === route || (route !== '/' && pathname.startsWith(`${route}/`))
+  );
 }
 
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
@@ -83,12 +88,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user !== null && pathname === '/login') {
-    // Already signed in: skip the sign-in screen.
-    const dashboardUrl = request.nextUrl.clone();
-    dashboardUrl.pathname = '/dashboard';
-    dashboardUrl.search = '';
-    return NextResponse.redirect(dashboardUrl);
+  // Already signed in: the sign-in screen and the landing page (whose primary
+  // action is "sign in") have nothing left to offer, so go straight to the app.
+  const signedInTarget = user !== null ? signedInRedirectTarget(pathname) : null;
+  if (signedInTarget !== null) {
+    const target = request.nextUrl.clone();
+    target.pathname = signedInTarget;
+    target.search = '';
+    return NextResponse.redirect(target);
   }
 
   return response;

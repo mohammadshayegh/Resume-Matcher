@@ -10,7 +10,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { isPublicPath } from '@/lib/supabase/middleware';
-import { DEFAULT_SIGNED_IN_PATH, safeNextPath } from '@/lib/supabase/redirect';
+import {
+  DEFAULT_SIGNED_IN_PATH,
+  safeNextPath,
+  signedInRedirectTarget,
+} from '@/lib/supabase/redirect';
 
 describe('isPublicPath', () => {
   it('allows the sign-in screen and the OAuth routes', () => {
@@ -26,9 +30,21 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/print/cover-letter/abc-123')).toBe(true);
   });
 
+  it('allows the landing page, which carries the sign-in button', () => {
+    // Gating '/' would leave a logged-out visitor with no way in at all.
+    expect(isPublicPath('/')).toBe(true);
+  });
+
+  it('does not let the landing page make the whole app public', () => {
+    // '/' must match exactly; a `${route}/` prefix check would match
+    // every path in the application.
+    for (const path of ['/dashboard', '/builder', '/settings', '/resumes/abc']) {
+      expect(isPublicPath(path)).toBe(false);
+    }
+  });
+
   it('protects every application route', () => {
     for (const path of [
-      '/',
       '/dashboard',
       '/builder',
       '/tailor',
@@ -71,5 +87,31 @@ describe('safeNextPath', () => {
     ]) {
       expect(safeNextPath(hostile)).toBe(DEFAULT_SIGNED_IN_PATH);
     }
+  });
+});
+
+describe('signedInRedirectTarget', () => {
+  it('sends a signed-in visitor off the landing page and the sign-in screen', () => {
+    // Both exist to get someone *into* the app; for someone already in they
+    // are dead ends.
+    expect(signedInRedirectTarget('/')).toBe(DEFAULT_SIGNED_IN_PATH);
+    expect(signedInRedirectTarget('/login')).toBe(DEFAULT_SIGNED_IN_PATH);
+  });
+
+  it('leaves every other route alone', () => {
+    for (const path of [
+      '/dashboard',
+      '/builder',
+      '/tracker',
+      '/settings',
+      '/resumes/abc-123',
+      '/print/resumes/abc-123',
+    ]) {
+      expect(signedInRedirectTarget(path)).toBeNull();
+    }
+  });
+
+  it('does not redirect paths that merely start with a redirected one', () => {
+    expect(signedInRedirectTarget('/login-help')).toBeNull();
   });
 });

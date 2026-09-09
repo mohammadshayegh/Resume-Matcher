@@ -44,6 +44,7 @@ from typing import Any, Final
 
 import jwt
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from jwt import PyJWKClient
 
 from app.config import settings
@@ -54,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "LOCAL_USER_ID",
+    "PUBLIC_PATHS",
+    "AuthenticationMiddleware",
     "AuthError",
     "AuthUser",
     "assert_auth_configuration",
@@ -338,11 +341,12 @@ def _unauthenticated() -> HTTPException:
     )
 
 
-async def get_current_user(request: Request) -> AuthUser:
-    """Resolve the authenticated caller for a request.
+def resolve_request_user(request: Request) -> AuthUser:
+    """Resolve the caller from the request's bearer token.
 
-    Returns the single local user when authentication is disabled; otherwise
-    requires a valid Supabase access token or print token.
+    Raises ``HTTPException(401)`` when authentication is enabled and the token
+    is missing or invalid. Returns the single local user when authentication is
+    not configured.
     """
     token = _bearer_token(request)
 
@@ -362,6 +366,25 @@ async def get_current_user(request: Request) -> AuthUser:
         # Detail server-side, generic 401 to the client (project error rule).
         logger.warning("Rejected token on %s: %s", request.url.path, error)
         raise _unauthenticated() from error
+
+
+async def get_current_user(request: Request) -> AuthUser:
+    """FastAPI dependency giving the authenticated caller.
+
+    The enforcement middleware has normally already verified the token and
+    stashed the result on ``request.state``; reuse it rather than verifying the
+    same token twice per request. The fallback path keeps this dependency
+    correct on its own, so it still works in unit tests that call a handler
+    directly and in any app that mounts the routers without the middleware.
+    """
+    # `getattr` on the request too, not just on state: this dependency is
+    # documented as usable standalone, and a caller may pass a lightweight
+    # request stand-in that has no `.state`.
+    state = getattr(request, "state", None)
+    cached = getattr(state, "auth_user", None) if state is not None else None
+    if isinstance(cached, AuthUser):
+        return cached
+    return resolve_request_user(request)
 
 
 def ensure_print_token_scope(user: AuthUser, resume_id: str) -> None:
@@ -384,6 +407,93 @@ def ensure_print_token_scope(user: AuthUser, resume_id: str) -> None:
         raise HTTPException(
             status_code=403, detail="This token cannot read that resume."
         )
+
+
+# ---------------------------------------------------------------------------
+# Request-level enforcement (the interceptor)
+# ---------------------------------------------------------------------------
+
+# The ONLY paths reachable without a valid token when authentication is on.
+#
+# This is an explicit allowlist, not a denylist, and that is the whole point:
+# a new endpoint is protected the moment it exists, without anyone remembering
+# to add a dependency to it. Per-endpoint ``Depends(get_current_user)`` still
+# supplies the caller's identity — and still works standalone — but it is no
+# longer what *stands between* an anonymous request and the data.
+#
+# Each entry earns its place:
+#   /api/v1/health     Docker's HEALTHCHECK has no Supabase session, and the
+#                      response contains no user data.
+#   /api/v1/auth/mode  The frontend reads this before it can possibly have a
+#                      session, to decide whether to show the sign-in screen.
+PUBLIC_PATHS: Final = frozenset({"/api/v1/health", "/api/v1/auth/mode"})
+
+
+def _is_public(path: str) -> bool:
+    """Exact-match only.
+
+    Deliberately not a prefix match: ``startswith("/api/v1/health")`` would
+    also expose a future ``/api/v1/health-details``, which is exactly the kind
+    of accident this allowlist exists to prevent.
+    """
+    return path.rstrip("/") in PUBLIC_PATHS or path in PUBLIC_PATHS
+
+
+class AuthenticationMiddleware:
+    """Reject unauthenticated requests before they reach a route handler.
+
+    Defense in depth over the per-endpoint dependencies. Without this, the
+    security of the whole API rests on every future endpoint remembering to
+    declare ``Depends(get_current_user)`` — a fail-open default where the
+    mistake is silent and the endpoint is simply public. With it, the default
+    is fail-closed: anything outside :data:`PUBLIC_PATHS` needs a valid token,
+    including paths that match no route (an anonymous caller cannot even map
+    which endpoints exist).
+
+    **Pure ASGI, deliberately not** ``BaseHTTPMiddleware`` / ``@app.middleware``.
+    ``BaseHTTPMiddleware`` runs the downstream app inside its own anyio task
+    group, which changes how cancellation propagates to the handler. This
+    application depends on that propagation: a cancelled confirmation must run
+    its ``finally`` and release the preview claim, and a cancelled upload must
+    retire its processing attempt. Wrapping the app in ``BaseHTTPMiddleware``
+    breaks exactly that (caught by
+    ``test_cancellation_releases_uncommitted_claim``). A plain ASGI callable
+    adds no task group and is transparent to cancellation.
+
+    A no-op when authentication is not configured, so single-user local mode
+    and the test suite are unaffected.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not settings.auth_enabled:
+            await self.app(scope, receive, send)
+            return
+
+        # CORS preflight carries no Authorization header by design; rejecting
+        # it would break every cross-origin call before the real request.
+        if scope.get("method") == "OPTIONS" or _is_public(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            user = resolve_request_user(Request(scope, receive))
+        except HTTPException as error:
+            response = JSONResponse(
+                status_code=error.status_code,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+            await response(scope, receive, send)
+            return
+
+        # Starlette's ``request.state`` is a view over ``scope["state"]``, so
+        # this is what ``get_current_user`` picks up — the token is verified
+        # once per request rather than once per layer.
+        scope.setdefault("state", {})["auth_user"] = user
+        await self.app(scope, receive, send)
 
 
 async def get_current_writer(

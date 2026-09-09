@@ -13,8 +13,25 @@
 /** Supabase project URL, e.g. https://abcxyz.supabase.co */
 export const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '');
 
-/** Supabase anon / publishable key. */
-export const SUPABASE_ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim();
+/**
+ * Supabase publishable key (formerly called the "anon" key).
+ *
+ * Supabase renamed these: new projects show a `sb_publishable_...` key where
+ * older ones showed an `anon` JWT. Both are the same thing as far as this app
+ * is concerned — a publishable client credential — and the client library
+ * treats either as an opaque string, so both work unchanged.
+ *
+ * Both variable names are accepted so that copying from current Supabase docs
+ * (which say "publishable") or from an older setup (which says "anon") both
+ * work. Each `process.env.X` is written out literally because Next.js inlines
+ * these at build time by static text substitution — a computed lookup would
+ * silently produce `undefined`.
+ */
+export const SUPABASE_ANON_KEY = (
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  ''
+).trim();
 
 /**
  * Whether this deployment has authentication turned on.
@@ -30,8 +47,14 @@ export const SUPABASE_ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '
  */
 export const AUTH_ENABLED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-/** Routes reachable without a session. Everything else requires sign-in. */
-export const PUBLIC_ROUTES = ['/login', '/auth/callback', '/auth/signout'] as const;
+/**
+ * Routes reachable without a session. Everything else requires sign-in.
+ *
+ * `/` is the marketing landing page and carries the "Continue with Google"
+ * button, so it must be reachable logged-out — gating it would leave a visitor
+ * with no way in. A signed-in visitor is redirected off it to /dashboard.
+ */
+export const PUBLIC_ROUTES = ['/', '/login', '/auth/callback', '/auth/signout'] as const;
 
 /**
  * Print routes are excluded from the session check on purpose.

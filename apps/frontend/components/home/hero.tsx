@@ -1,8 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+
 import { useTranslations } from '@/lib/i18n';
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button';
+import { AUTH_ENABLED } from '@/lib/supabase/config';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export default function Hero() {
   const { t } = useTranslations();
@@ -13,6 +17,50 @@ export default function Hero() {
   // rest of the design system.
   const buttonClass =
     'group relative border border-black bg-transparent px-8 py-3 font-mono text-sm font-bold uppercase text-blue-700 transition-[transform,box-shadow,background-color,color] duration-150 ease-out hover:bg-blue-700 hover:text-background hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-sw-default active:translate-x-0 active:translate-y-0 active:shadow-none cursor-pointer';
+
+  // A signed-in visitor is normally redirected to /dashboard by the middleware
+  // before this renders. This state covers the case it cannot: a session
+  // established in another tab after this page was already loaded. `null`
+  // means "not determined yet", so the primary action is not swapped out from
+  // under someone mid-click.
+  const [hasSession, setHasSession] = useState<boolean | null>(AUTH_ENABLED ? null : false);
+
+  useEffect(() => {
+    if (!AUTH_ENABLED) {
+      return;
+    }
+    const supabase = getSupabaseBrowserClient();
+    if (supabase === null) {
+      setHasSession(false);
+      return;
+    }
+
+    let active = true;
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (active) {
+        setHasSession(session !== null);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) {
+        setHasSession(session !== null);
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Sign-in is the primary action for a logged-out visitor; "Launch app" is
+  // the primary action when there is nothing to sign in to (local mode) or the
+  // visitor already has a session. Exactly one of them renders, keeping the
+  // "one primary action per region" rule.
+  const showGoogleSignIn = AUTH_ENABLED && hasSession === false;
 
   return (
     <section
@@ -30,7 +78,7 @@ export default function Hero() {
           {t('home.brandLine2')}
         </h1>
 
-        <div className="flex flex-col gap-4 md:flex-row md:gap-12">
+        <div className="flex flex-col items-center gap-4 md:flex-row md:gap-12">
           <a
             href="https://github.com/srbhr/Resume-Matcher"
             target="_blank"
@@ -47,9 +95,15 @@ export default function Hero() {
           >
             {t('home.docs')}
           </a>
-          <Link href="/dashboard" className={buttonClass}>
-            {t('home.launchApp')}
-          </Link>
+          {showGoogleSignIn ? (
+            <GoogleSignInButton next="/dashboard" />
+          ) : (
+            /* Rendered while the session is still unknown too, so the row
+               never collapses and reflows once it resolves. */
+            <Link href="/dashboard" className={buttonClass}>
+              {t('home.launchApp')}
+            </Link>
+          )}
         </div>
       </div>
     </section>

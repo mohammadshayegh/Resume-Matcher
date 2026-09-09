@@ -119,6 +119,44 @@ await self._owned_preview(session, preview_id, user_id)
   (also correct now for a second reason: one account's reset must not disable
   the LLM for everyone).
 
+### Enforcement: closed by default (`AuthenticationMiddleware`)
+
+`app.auth.AuthenticationMiddleware`, registered in `main.py`, rejects
+unauthenticated requests **before routing**. Only `PUBLIC_PATHS` —
+`/api/v1/health` and `/api/v1/auth/mode` — plus CORS preflight get through.
+
+Why this exists on top of the per-endpoint dependencies: those are fail-open by
+omission. Add a route, forget `Depends(get_current_user)`, and it is silently
+public. The middleware inverts that default, so a new endpoint is protected the
+moment it exists. Even unrouted paths return 401, so an anonymous caller cannot
+map which endpoints exist. The dependencies still supply *identity* (and still
+work standalone); they are simply no longer the only thing between an anonymous
+request and the data.
+
+Three implementation details that are load-bearing:
+
+- **Pure ASGI, not `BaseHTTPMiddleware`.** `@app.middleware("http")` wraps the
+  downstream app in an anyio task group, which changes how cancellation reaches
+  the handler. This app depends on that propagation — a cancelled confirmation
+  must run its `finally` and release the preview claim, a cancelled upload must
+  retire its processing attempt. Using `BaseHTTPMiddleware` breaks exactly that
+  (`test_cancellation_releases_uncommitted_claim` catches it). A plain ASGI
+  callable adds no task group and is transparent to cancellation.
+- **Registered before `CORSMiddleware`**, so CORS ends up outermost
+  (`add_middleware` prepends). A 401 therefore carries CORS headers; without
+  that a browser reports an opaque network error and an auth failure looks like
+  an outage.
+- **Exact-path allowlist, never a prefix.** `startswith("/api/v1/health")`
+  would also expose a future `/api/v1/health-details`.
+
+The middleware stores the verified `AuthUser` on `scope["state"]`, which is
+what backs `request.state`, so `get_current_user` reuses it and the token is
+verified once per request rather than once per layer.
+
+**`/docs`, `/redoc`, `/openapi.json` and `/` are gated** when auth is on. In
+local single-user mode the middleware is a no-op, so they stay open for
+development.
+
 ### Endpoint auth matrix
 
 | Endpoint(s) | Dependency |
@@ -226,8 +264,24 @@ Backend (`apps/backend/.env`): `SUPABASE_URL`, optionally
 `SUPABASE_JWT_SECRET` (legacy HS256 projects only) and `SUPABASE_JWKS_URL`,
 plus `AUTH_REQUIRED=true` and `PRINT_TOKEN_TTL_SECONDS`.
 
-Frontend (`apps/frontend/.env.local`): `NEXT_PUBLIC_SUPABASE_URL` and
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+Frontend (`apps/frontend/.env.local`): `NEXT_PUBLIC_SUPABASE_URL` and the
+publishable key, as either `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` or
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable is checked first).
+
+> **Key naming.** Supabase renamed the `anon` key to the *publishable* key
+> (`sb_publishable_...`); older projects still show an `anon` JWT, possibly
+> under a "Legacy API keys" tab. Both work — `lib/supabase/config.ts` reads
+> either variable, and the client library treats the key as an opaque string,
+> so no code path cares about the format. Verified against
+> `@supabase/supabase-js` 2.116 / `@supabase/ssr` 0.12.
+>
+> **URL must be the project root**, `https://<ref>.supabase.co` with no path.
+> The Data API settings page displays the REST endpoint (`.../rest/v1/`); the
+> code appends `/auth/v1/...` itself. The setup script strips such a suffix.
+>
+> **Reachability is probed via JWKS, not `/auth/v1/health`** — Supabase now
+> requires an `apikey` header on health, so a 401 there means "bad key", not
+> "project down".
 
 **Docker:** the frontend is built inside the image and Next.js inlines every
 `NEXT_PUBLIC_*` value at build time, so the two frontend values are **build
@@ -242,6 +296,23 @@ docker build \
 The backend's `SUPABASE_URL` is ordinary runtime env. `docker-compose.yml`
 wires both. Passing the frontend values only as container environment would
 leave the browser with no Supabase project and silently disable sign-in.
+
+### Guided setup (recommended)
+
+```bash
+python3 scripts/setup_supabase_auth.py            # prompts for the two values
+python3 scripts/setup_supabase_auth.py --check    # re-verify at any time
+python3 scripts/setup_supabase_auth.py --disable  # back to single-user mode
+```
+
+It validates before writing anything: refuses a `service_role`/`sb_secret_`
+key (which would ship a full-access credential in the JS bundle), catches a
+pasted dashboard URL, confirms the project answers and accepts the key, reports
+whether **Google is actually enabled**, and detects whether the project signs
+with asymmetric keys (no `SUPABASE_JWT_SECRET` needed) or legacy HS256 (secret
+required). On any failure it writes nothing, so a bad run cannot half-configure
+you. Then it sets all three values across both files and turns on
+`AUTH_REQUIRED`.
 
 ### Supabase project setup
 
@@ -262,6 +333,7 @@ Supabase is used for identity only.
 
 | Suite | Covers |
 |---|---|
+| `apps/backend/tests/integration/test_auth_enforcement.py` | The API is closed by default: a route with **no** auth dependency is still 401, unrouted paths are 401 not 404, the allowlist is exact-match, CORS preflight passes, 401s carry CORS headers, the token is verified exactly once, and local mode is unaffected |
 | `apps/backend/tests/unit/test_auth.py` | Token verification: wrong secret, expired, wrong audience, missing `sub`, `alg: none`, algorithm/key-material mismatch; print-token round-trip, tampering, expiry, scope, write refusal; the `AUTH_REQUIRED` startup guard |
 | `apps/backend/tests/integration/test_user_isolation.py` | Cross-account isolation at the data layer *and* over HTTP: list/get/update/delete, per-user master, tracker dedupe and bulk ops, per-user stats and reset, ownership-reassignment refusal, `/health` and `/auth/mode` staying public |
 | `apps/frontend/tests/auth-routing.test.ts` | `isPublicPath` (print routes public, app routes protected, no lookalike-prefix bypass) and `safeNextPath` (open-redirect refusals) |
