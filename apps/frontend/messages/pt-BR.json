@@ -1222,6 +1222,18 @@
       "proxiesHint": "Um por linha, como user:pass@host:port. Distribui as requisições entre endereços.",
       "save": "Salvar Configurações de Busca",
       "saved": "Salvo"
-    }
+    },
+    "newChip": "Nova",
+    "newCount": "novas",
+    "filterAll": "Todas",
+    "filterNew": "Somente novas",
+    "clear": "Limpar",
+    "noStoredResults": "Nenhuma vaga salva ainda. Execute uma busca para preencher esta lista.",
+    "noNewResults": "Nada novo na última busca. Mude para Todas para ver tudo o que foi salvo.",
+    "searchSummary": "{added} novas, {skipped} já vistas.",
+    "retentionNote": "As vagas são mantidas por {days} dias e depois removidas automaticamente.",
+    "seenTimes": "vista {count}×",
+    "clearConfirmTitle": "Limpar vagas salvas?",
+    "clearConfirmDescription": "Isto esquece todas as vagas encontradas até agora, então a próxima busca as mostrará como novas. Vagas que você já salvou ou adicionou ao acompanhamento são mantidas."
   }
 }

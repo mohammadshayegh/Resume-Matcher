@@ -1222,6 +1222,18 @@
       "proxiesHint": "1行に1件、user:pass@host:port 形式。リクエストを複数のアドレスに分散します。",
       "save": "検索設定を保存",
       "saved": "保存しました"
-    }
+    },
+    "newChip": "新着",
+    "newCount": "件の新着",
+    "filterAll": "すべて",
+    "filterNew": "新着のみ",
+    "clear": "クリア",
+    "noStoredResults": "保存された求人はまだありません。求人検索を実行するとここに表示されます。",
+    "noNewResults": "直近の検索に新着はありません。「すべて」に切り替えると保存済みの求人を確認できます。",
+    "searchSummary": "新着 {added} 件、既出 {skipped} 件。",
+    "retentionNote": "求人は {days} 日間保持され、その後自動的に削除されます。",
+    "seenTimes": "{count} 回検出",
+    "clearConfirmTitle": "保存した求人をクリアしますか？",
+    "clearConfirmDescription": "これまでに見つかった求人をすべて忘れるため、次回の検索ではすべて新着として表示されます。保存済み・トラッカーに追加済みの求人は残ります。"
   }
 }

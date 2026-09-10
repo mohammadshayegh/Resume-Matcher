@@ -1222,6 +1222,18 @@
       "proxiesHint": "Uno por línea, como user:pass@host:port. Distribuye las peticiones entre direcciones.",
       "save": "Guardar Ajustes de Búsqueda",
       "saved": "Guardado"
-    }
+    },
+    "newChip": "Nuevo",
+    "newCount": "nuevos",
+    "filterAll": "Todos",
+    "filterNew": "Solo nuevos",
+    "clear": "Limpiar",
+    "noStoredResults": "Aún no hay empleos guardados. Ejecuta una búsqueda para llenar esta lista.",
+    "noNewResults": "Nada nuevo en la última búsqueda. Cambia a Todos para ver todo lo guardado.",
+    "searchSummary": "{added} nuevos, {skipped} ya vistos.",
+    "retentionNote": "Los empleos se conservan {days} días y luego se eliminan automáticamente.",
+    "seenTimes": "visto {count}×",
+    "clearConfirmTitle": "¿Limpiar empleos guardados?",
+    "clearConfirmDescription": "Esto olvida todos los empleos encontrados hasta ahora, así que la próxima búsqueda los mostrará como nuevos. Los empleos que ya guardaste o añadiste al seguimiento se conservan."
   }
 }

@@ -147,6 +147,15 @@ async def _purge_expired() -> None:
         logger.exception("Failed to purge expired job search listings")
 
 
+def _is_configured(prefs: dict[str, Any], saved: bool) -> bool:
+    """Whether the caller has saved enough for a search to be possible."""
+    return (
+        saved
+        and bool(prefs.get("sites"))
+        and bool(prefs.get("search_term") or prefs.get("google_search_term"))
+    )
+
+
 def _defaults() -> dict[str, Any]:
     """The preference set a user who has never saved anything starts from."""
     return JobSearchPreferencesRequest().model_dump()
@@ -315,9 +324,7 @@ async def get_job_search_status(
             detail="Failed to load job search status. Please try again.",
         ) from exc
     remaining = _seconds_until_next_run(prefs.get("last_run_at"))
-    configured = saved and bool(prefs.get("sites")) and bool(
-        prefs.get("search_term") or prefs.get("google_search_term")
-    )
+    configured = _is_configured(prefs, saved)
     return JobSearchStatusResponse(
         last_run_at=prefs.get("last_run_at"),
         cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
@@ -422,7 +429,7 @@ async def get_job_search_results(
     await _purge_expired()
     try:
         listings = await db.list_job_search_listings(user_id=user.id)
-        prefs, _ = await _load_preferences(user.id)
+        prefs, saved = await _load_preferences(user.id)
     except DatabaseBusyError:
         raise
     except Exception as exc:
@@ -442,6 +449,7 @@ async def get_job_search_results(
         cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
         seconds_until_next_run=remaining,
         can_search=remaining == 0,
+        configured=_is_configured(prefs, saved),
     )
 
 
@@ -457,7 +465,7 @@ async def clear_job_search_results(
     """
     try:
         await db.clear_job_search_listings(user_id=user.id)
-        prefs, _ = await _load_preferences(user.id)
+        prefs, saved = await _load_preferences(user.id)
     except DatabaseBusyError:
         raise
     except Exception as exc:
@@ -477,6 +485,7 @@ async def clear_job_search_results(
         cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
         seconds_until_next_run=remaining,
         can_search=remaining == 0,
+        configured=_is_configured(prefs, saved),
     )
 
 

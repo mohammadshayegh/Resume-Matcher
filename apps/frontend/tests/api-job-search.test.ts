@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchJobSearchOptions,
   fetchJobSearchPreferences,
+  fetchJobSearchResults,
+  clearJobSearchResults,
   updateJobSearchPreferences,
   runJobSearch,
   saveJobSearchResult,
@@ -9,7 +11,7 @@ import {
   formatSalary,
   JobSearchCooldownError,
   type JobSearchPreferences,
-  type JobSearchResult,
+  type JobSearchListing,
 } from '@/lib/api/job-search';
 
 /**
@@ -39,8 +41,8 @@ const PREFERENCES: JobSearchPreferences = {
   proxies: [],
 };
 
-const RESULT: JobSearchResult = {
-  id: 'in-1',
+const LISTING: JobSearchListing = {
+  listing_id: 'listing-1',
   site: 'indeed',
   title: 'Senior Python Engineer',
   company: 'Acme',
@@ -56,6 +58,13 @@ const RESULT: JobSearchResult = {
   currency: 'EUR',
   interval: 'yearly',
   description: 'Build things.',
+  first_seen_at: '2026-03-01T00:00:00Z',
+  last_seen_at: '2026-03-01T00:00:00Z',
+  times_seen: 1,
+  is_new: true,
+  expires_at: '2026-03-15T00:00:00Z',
+  saved_job_id: null,
+  application_id: null,
 };
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
@@ -92,6 +101,7 @@ describe('job search API client', () => {
         description_formats: [],
         max_results_wanted: 100,
         cooldown_seconds: 14400,
+        retention_days: 14,
       })
     );
 
@@ -147,11 +157,16 @@ describe('job search API client', () => {
     await expect(updateJobSearchPreferences(PREFERENCES)).rejects.toThrow(/Unsupported job site/);
   });
 
-  it('POSTs /job-search/run and returns results', async () => {
+  it('POSTs /job-search/run and returns the stored listings', async () => {
+    // The run returns the whole cache, not just this run's finds, so the page
+    // renders the same set a later GET would return.
     fetchMock.mockResolvedValue(
       jsonResponse({
-        results: [RESULT],
+        listings: [LISTING],
         count: 1,
+        new_count: 1,
+        duplicate_count: 3,
+        retention_days: 14,
         searched_at: '2026-03-01T00:00:00Z',
         seconds_until_next_run: 14400,
         cooldown_seconds: 14400,
@@ -162,7 +177,52 @@ describe('job search API client', () => {
     const { url, options } = lastCall();
     expect(url).toContain('/job-search/run');
     expect(options.method).toBe('POST');
-    expect(response.results[0].company).toBe('Acme');
+    expect(response.listings[0].company).toBe('Acme');
+    expect(response.new_count).toBe(1);
+    expect(response.duplicate_count).toBe(3);
+  });
+
+  it('GETs stored results, which is what the page loads on mount', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        listings: [LISTING],
+        count: 1,
+        new_count: 1,
+        retention_days: 14,
+        last_run_at: '2026-03-01T00:00:00Z',
+        cooldown_seconds: 14400,
+        seconds_until_next_run: 11520,
+        can_search: false,
+      })
+    );
+
+    const response = await fetchJobSearchResults();
+    expect(lastCall().url).toContain('/job-search/results');
+    // Results outlive the request that found them, so they are still here
+    // during the cooldown.
+    expect(response.can_search).toBe(false);
+    expect(response.listings[0].is_new).toBe(true);
+  });
+
+  it('DELETEs the stored results', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        listings: [],
+        count: 0,
+        new_count: 0,
+        retention_days: 14,
+        last_run_at: null,
+        cooldown_seconds: 14400,
+        seconds_until_next_run: 0,
+        can_search: true,
+      })
+    );
+
+    const response = await clearJobSearchResults();
+    const { url, options } = lastCall();
+    expect(url).toContain('/job-search/results');
+    expect(options.method).toBe('DELETE');
+    expect(response.listings).toEqual([]);
   });
 
   it('raises a typed cooldown error carrying the remaining seconds on 429', async () => {
@@ -184,22 +244,28 @@ describe('job search API client', () => {
     }
   });
 
-  it('POSTs a save with the tracker flag', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ job_id: 'job-1', application_id: 'app-1' }));
+  it('saves by listing id rather than by posting body', async () => {
+    // The listing is already stored server-side, so the server reads it from
+    // the cache instead of trusting a client-supplied copy.
+    fetchMock.mockResolvedValue(
+      jsonResponse({ job_id: 'job-1', application_id: 'app-1', listing_id: 'listing-1' })
+    );
 
-    await saveJobSearchResult(RESULT, { addToTracker: true });
+    await saveJobSearchResult(LISTING.listing_id, { addToTracker: true });
     const { url, options } = lastCall();
     expect(url).toContain('/job-search/save');
     expect(options.method).toBe('POST');
     const body = JSON.parse(String(options.body));
+    expect(body.listing_id).toBe('listing-1');
     expect(body.add_to_tracker).toBe(true);
-    expect(body.result.job_url).toBe(RESULT.job_url);
   });
 
   it('defaults a save to job-only', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ job_id: 'job-1', application_id: null }));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ job_id: 'job-1', application_id: null, listing_id: 'listing-1' })
+    );
 
-    await saveJobSearchResult(RESULT);
+    await saveJobSearchResult(LISTING.listing_id);
     expect(JSON.parse(String(lastCall().options.body)).add_to_tracker).toBe(false);
   });
 });
@@ -225,15 +291,15 @@ describe('formatCooldown', () => {
 
 describe('formatSalary', () => {
   it('renders a full range with currency and interval', () => {
-    expect(formatSalary(RESULT)).toBe('EUR 80,000–95,000 / yearly');
+    expect(formatSalary(LISTING)).toBe('EUR 80,000–95,000 / yearly');
   });
 
   it('renders a single bound when only one is reported', () => {
-    expect(formatSalary({ ...RESULT, max_amount: null })).toBe('EUR 80,000 / yearly');
+    expect(formatSalary({ ...LISTING, max_amount: null })).toBe('EUR 80,000 / yearly');
   });
 
   it('renders nothing when the board reported no pay', () => {
     // Most postings have no salary; an empty string keeps the row clean.
-    expect(formatSalary({ ...RESULT, min_amount: null, max_amount: null })).toBe('');
+    expect(formatSalary({ ...LISTING, min_amount: null, max_amount: null })).toBe('');
   });
 });

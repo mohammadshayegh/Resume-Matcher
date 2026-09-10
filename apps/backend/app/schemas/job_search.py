@@ -206,6 +206,8 @@ class JobSearchListingsResponse(BaseModel):
     cooldown_seconds: int
     seconds_until_next_run: int
     can_search: bool
+    # Whether the caller has saved enough settings for a search to be possible.
+    configured: bool = False
 
 
 class JobSearchRunResponse(BaseModel):

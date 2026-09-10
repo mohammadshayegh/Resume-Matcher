@@ -1222,6 +1222,18 @@
       "proxiesHint": "Un par ligne, au format user:pass@host:port. Répartit les requêtes entre adresses.",
       "save": "Enregistrer les Paramètres",
       "saved": "Enregistré"
-    }
+    },
+    "newChip": "Nouveau",
+    "newCount": "nouveaux",
+    "filterAll": "Tous",
+    "filterNew": "Nouveaux seulement",
+    "clear": "Effacer",
+    "noStoredResults": "Aucune offre enregistrée. Lancez une recherche pour remplir cette liste.",
+    "noNewResults": "Rien de nouveau lors de la dernière recherche. Passez à Tous pour voir tout ce qui est enregistré.",
+    "searchSummary": "{added} nouvelles, {skipped} déjà vues.",
+    "retentionNote": "Les offres sont conservées {days} jours, puis supprimées automatiquement.",
+    "seenTimes": "vue {count}×",
+    "clearConfirmTitle": "Effacer les offres enregistrées ?",
+    "clearConfirmDescription": "Cela oublie toutes les offres trouvées jusqu'ici ; la prochaine recherche les affichera de nouveau comme nouvelles. Les offres déjà enregistrées ou ajoutées au suivi sont conservées."
   }
 }

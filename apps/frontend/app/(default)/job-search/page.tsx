@@ -160,10 +160,7 @@ export default function JobSearchPage() {
     }
   }, []);
 
-  const newCount = useMemo(
-    () => listings.filter((listing) => listing.is_new).length,
-    [listings]
-  );
+  const newCount = useMemo(() => listings.filter((listing) => listing.is_new).length, [listings]);
   const visible = useMemo(
     () => (filter === 'new' ? listings.filter((listing) => listing.is_new) : listings),
     [filter, listings]
@@ -274,11 +271,7 @@ export default function JobSearchPage() {
                         </button>
                       ))}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setConfirmClear(true)}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => setConfirmClear(true)}>
                       <Trash2 className="h-3 w-3" />
                       {t('jobSearch.clear')}
                     </Button>
@@ -297,9 +290,7 @@ export default function JobSearchPage() {
               )}
 
               {listings.length > 0 && visible.length === 0 && (
-                <p className="font-mono text-xs text-steel-grey">
-                  {t('jobSearch.noNewResults')}
-                </p>
+                <p className="font-mono text-xs text-steel-grey">{t('jobSearch.noNewResults')}</p>
               )}
 
               {visible.map((listing) => {
@@ -378,9 +369,7 @@ export default function JobSearchPage() {
                           onClick={() => handleSave(listing, true)}
                         >
                           {isTracked ? <CheckCircle2 className="h-3 w-3" /> : null}
-                          {isTracked
-                            ? t('jobSearch.trackedLabel')
-                            : t('jobSearch.addToTracker')}
+                          {isTracked ? t('jobSearch.trackedLabel') : t('jobSearch.addToTracker')}
                         </Button>
                       </div>
                     </div>

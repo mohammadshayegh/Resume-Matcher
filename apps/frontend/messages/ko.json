@@ -1222,6 +1222,18 @@
       "proxiesHint": "한 줄에 하나씩, user:pass@host:port 형식. 요청을 여러 주소로 분산합니다.",
       "save": "검색 설정 저장",
       "saved": "저장됨"
-    }
+    },
+    "newChip": "신규",
+    "newCount": "건 신규",
+    "filterAll": "전체",
+    "filterNew": "신규만",
+    "clear": "비우기",
+    "noStoredResults": "저장된 공고가 아직 없습니다. 채용 검색을 실행하면 목록이 채워집니다.",
+    "noNewResults": "최근 검색에서 새로운 공고가 없습니다. 전체로 전환하면 저장된 공고를 모두 볼 수 있습니다.",
+    "searchSummary": "신규 {added}건, 이미 본 공고 {skipped}건.",
+    "retentionNote": "공고는 {days}일 동안 보관된 뒤 자동으로 삭제됩니다.",
+    "seenTimes": "{count}회 검색됨",
+    "clearConfirmTitle": "저장된 공고를 비울까요?",
+    "clearConfirmDescription": "지금까지 찾은 공고를 모두 잊으므로 다음 검색에서 다시 신규로 표시됩니다. 이미 저장했거나 트래커에 추가한 공고는 유지됩니다."
   }
 }

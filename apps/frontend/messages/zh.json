@@ -1222,6 +1222,18 @@
       "proxiesHint": "每行一个，格式为 user:pass@host:port。用于将请求分散到多个地址。",
       "save": "保存搜索设置",
       "saved": "已保存"
-    }
+    },
+    "newChip": "新",
+    "newCount": "个新职位",
+    "filterAll": "全部",
+    "filterNew": "仅新职位",
+    "clear": "清空",
+    "noStoredResults": "还没有已保存的职位。运行一次职位搜索来填充此列表。",
+    "noNewResults": "最近一次搜索没有新职位。切换到“全部”查看所有已保存的职位。",
+    "searchSummary": "新增 {added} 个，已见过 {skipped} 个。",
+    "retentionNote": "职位保留 {days} 天，之后会自动删除。",
+    "seenTimes": "已出现 {count} 次",
+    "clearConfirmTitle": "清空已保存的职位？",
+    "clearConfirmDescription": "这会忘记目前找到的所有职位，下次搜索会把它们重新视为新职位。你已保存或已加入跟踪的职位会保留。"
   }
 }

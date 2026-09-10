@@ -1222,6 +1222,18 @@
       "proxiesHint": "One per line, as user:pass@host:port. Used to spread requests across addresses.",
       "save": "Save Search Settings",
       "saved": "Saved"
-    }
+    },
+    "newChip": "New",
+    "newCount": "new",
+    "filterAll": "All",
+    "filterNew": "New only",
+    "clear": "Clear",
+    "noStoredResults": "No saved jobs yet. Run a job search to fill this list.",
+    "noNewResults": "Nothing new in the last search. Switch to All to see everything saved.",
+    "searchSummary": "{added} new, {skipped} already seen.",
+    "retentionNote": "Jobs are kept for {days} days, then removed automatically.",
+    "seenTimes": "seen {count}×",
+    "clearConfirmTitle": "Clear saved jobs?",
+    "clearConfirmDescription": "This forgets every job found so far, so the next search will show them all as new again. Jobs you already saved or added to the tracker are kept."
   }
 }
