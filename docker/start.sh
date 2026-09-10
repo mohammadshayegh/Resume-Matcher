@@ -188,6 +188,14 @@ else
     status "Data directory exists: $DATA_DIR"
 fi
 
+# CODEX_HOME lives below the persisted data volume. Docker mounts the volume
+# after image creation, so the directory created in the Dockerfile is hidden on
+# the first run unless it is recreated here.
+if [ -n "${CODEX_HOME:-}" ] && [ ! -d "$CODEX_HOME" ]; then
+    mkdir -p "$CODEX_HOME"
+    status "Created Codex state directory: $CODEX_HOME"
+fi
+
 # Check for Playwright browsers
 info "Checking Playwright browsers..."
 if [ -d "/root/.cache/ms-playwright" ] || [ -d "/home/appuser/.cache/ms-playwright" ]; then

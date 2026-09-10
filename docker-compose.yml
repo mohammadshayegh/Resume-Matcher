@@ -30,6 +30,9 @@ services:
       # Defaults are defined in apps/backend/app/config.py
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_MODEL=${LLM_MODEL:-}
+      # Codex has its own model catalog and authentication in CODEX_HOME.
+      # Keep this explicit so a fresh data volume still selects Codex.
+      - CODEX_MODEL=${CODEX_MODEL:-gpt-5.6-luna}
       # Optional Docker Secret file path (same behavior as Postgres-style *_FILE)
       #- LLM_API_KEY_FILE=${LLM_API_KEY_FILE:-/run/secrets/llm_api_key}
       - LLM_API_KEY=${LLM_API_KEY:-}
@@ -37,7 +40,7 @@ services:
       # - LLM_API_BASE=http://host.docker.internal:11434
       - LLM_API_BASE=${LLM_API_BASE:-}
       # CORS origins (JSON array format). FRONTEND_BASE_URL is auto-included.
-      #- CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Authentication (Supabase, Google OAuth only). Leave SUPABASE_URL empty
       # for single-user mode: no sign-in, all data in one local account. Set it
       # to the SAME project as the NEXT_PUBLIC_SUPABASE_URL build arg above.
