@@ -28,6 +28,7 @@ export interface JobSearchOptions {
   description_formats: JobSearchOption[];
   max_results_wanted: number;
   cooldown_seconds: number;
+  retention_days: number;
 }
 
 export interface JobSearchPreferences {
@@ -65,8 +66,8 @@ export interface JobSearchStatus {
   configured: boolean;
 }
 
-export interface JobSearchResult {
-  id: string;
+/** The posting fields every board is normalised onto. */
+export interface JobSearchPosting {
   site: string | null;
   title: string;
   company: string | null;
@@ -84,9 +85,46 @@ export interface JobSearchResult {
   description: string | null;
 }
 
-export interface JobSearchRunResponse {
-  results: JobSearchResult[];
+/**
+ * A stored posting.
+ *
+ * Results are persisted server-side rather than living only in this page, so
+ * they survive a reload and the four-hour cooldown. `is_new` marks the
+ * postings the most recent search found for the first time — it is a stored
+ * flag, not a client guess, so the "NEW" chip is still correct after a reload.
+ */
+export interface JobSearchListing extends JobSearchPosting {
+  listing_id: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  /** How many searches have returned this posting; 1 means "found once". */
+  times_seen: number;
+  is_new: boolean;
+  expires_at: string;
+  saved_job_id: string | null;
+  application_id: string | null;
+}
+
+export interface JobSearchListingsResponse {
+  listings: JobSearchListing[];
   count: number;
+  new_count: number;
+  retention_days: number;
+  last_run_at: string | null;
+  cooldown_seconds: number;
+  seconds_until_next_run: number;
+  can_search: boolean;
+}
+
+export interface JobSearchRunResponse {
+  /** The caller's whole cache, not just this run's finds. */
+  listings: JobSearchListing[];
+  count: number;
+  /** Postings this run saw for the first time. */
+  new_count: number;
+  /** Postings this run re-found and did not duplicate. */
+  duplicate_count: number;
+  retention_days: number;
   searched_at: string;
   seconds_until_next_run: number;
   cooldown_seconds: number;
@@ -95,6 +133,7 @@ export interface JobSearchRunResponse {
 export interface JobSearchSaveResponse {
   job_id: string;
   application_id: string | null;
+  listing_id: string;
 }
 
 /** Raised on a 429 so the caller can show the countdown instead of an error. */
@@ -180,8 +219,29 @@ export async function runJobSearch(): Promise<JobSearchRunResponse> {
   return res.json();
 }
 
+/** The caller's stored listings — what the page shows on load. */
+export async function fetchJobSearchResults(): Promise<JobSearchListingsResponse> {
+  const res = await apiFetch('/job-search/results', { credentials: 'include' });
+  if (!res.ok) {
+    throw new Error(await errorMessage(res, `Failed to load saved jobs (${res.status}).`));
+  }
+  return res.json();
+}
+
+/** Forget every stored listing, so the next search treats all of them as new. */
+export async function clearJobSearchResults(): Promise<JobSearchListingsResponse> {
+  const res = await apiFetch('/job-search/results', {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error(await errorMessage(res, `Failed to clear saved jobs (${res.status}).`));
+  }
+  return res.json();
+}
+
 export async function saveJobSearchResult(
-  result: JobSearchResult,
+  listingId: string,
   options: { addToTracker?: boolean; resumeId?: string } = {}
 ): Promise<JobSearchSaveResponse> {
   const res = await apiFetch('/job-search/save', {
@@ -189,7 +249,7 @@ export async function saveJobSearchResult(
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({
-      result,
+      listing_id: listingId,
       add_to_tracker: options.addToTracker ?? false,
       resume_id: options.resumeId ?? null,
     }),
@@ -216,7 +276,7 @@ export function formatCooldown(seconds: number): string {
 }
 
 /** Format a salary range the way the boards report it, or '' when absent. */
-export function formatSalary(result: JobSearchResult): string {
+export function formatSalary(result: JobSearchPosting): string {
   const { min_amount: min, max_amount: max, currency, interval } = result;
   if (min == null && max == null) return '';
   const symbol = currency ? `${currency} ` : '';

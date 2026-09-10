@@ -1,8 +1,11 @@
 """Pydantic schemas for request/response models."""
 
 from app.schemas.job_search import (
+    JobSearchListing,
+    JobSearchListingsResponse,
     JobSearchOption,
     JobSearchOptionsResponse,
+    JobSearchPosting,
     JobSearchPreferencesRequest,
     JobSearchPreferencesResponse,
     JobSearchResult,
@@ -88,8 +91,11 @@ from app.schemas.applications import (
 )
 
 __all__ = [
+    "JobSearchListing",
+    "JobSearchListingsResponse",
     "JobSearchOption",
     "JobSearchOptionsResponse",
+    "JobSearchPosting",
     "JobSearchPreferencesRequest",
     "JobSearchPreferencesResponse",
     "JobSearchResult",

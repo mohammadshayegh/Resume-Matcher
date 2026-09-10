@@ -1,9 +1,16 @@
 """Job board search endpoints (JobSpy).
 
-The search itself is throttled to one run per user per
-``SEARCH_COOLDOWN_SECONDS``. The throttle is enforced here rather than in the
-UI because its purpose is to protect the deployment's IP from the job boards'
-rate limiting — a disabled button is a hint, not a control.
+The search is throttled to one run per user per ``SEARCH_COOLDOWN_SECONDS``.
+The throttle is enforced here rather than in the UI because its purpose is to
+protect the deployment's IP from the job boards' rate limiting — a disabled
+button is a hint, not a control.
+
+Every scraped posting is **persisted** to the caller's listing cache
+(``job_search_listings``) rather than returned once and forgotten. That is what
+makes the feature usable around a four-hour cooldown: the results are still
+there on the next page load, and a repeat search reports only what is
+genuinely new instead of re-showing the same jobs. Cached listings are kept for
+``RETENTION_DAYS`` and then purged.
 """
 
 import logging
@@ -16,11 +23,12 @@ from starlette.concurrency import run_in_threadpool
 from app.auth import AuthUser, get_current_user, get_current_writer
 from app.database import DatabaseBusyError, db
 from app.schemas.job_search import (
+    JobSearchListing,
+    JobSearchListingsResponse,
     JobSearchOption,
     JobSearchOptionsResponse,
     JobSearchPreferencesRequest,
     JobSearchPreferencesResponse,
-    JobSearchResult,
     JobSearchRunResponse,
     JobSearchSaveRequest,
     JobSearchSaveResponse,
@@ -47,6 +55,11 @@ logger = logging.getLogger(__name__)
 
 # One search per four hours, per user.
 SEARCH_COOLDOWN_SECONDS: int = 4 * 60 * 60
+
+# How long a scraped posting stays in the cache before it is purged. Two weeks
+# is comfortably longer than a posting stays worth applying to, and long enough
+# that a repeat search still recognises what the user has already seen.
+RETENTION_DAYS: int = 14
 
 # Boards jobspy scrapes without a `search_term` (they filter another way):
 # Google uses `google_search_term`, so requiring a search term for it would be
@@ -108,6 +121,30 @@ def _seconds_until_next_run(last_run_at: str | None) -> int:
     if seconds <= 0:
         return 0
     return min(seconds, SEARCH_COOLDOWN_SECONDS)
+
+
+def _expiry_from(searched_at: str) -> str:
+    """When a posting first seen at ``searched_at`` should be purged."""
+    seen = _parse_iso(searched_at) or datetime.now(timezone.utc)
+    return (seen + timedelta(days=RETENTION_DAYS)).isoformat()
+
+
+async def _purge_expired() -> None:
+    """Sweep expired listings, best effort.
+
+    Called from the read and search paths rather than a scheduler: this app
+    runs as a single worker with no job runner, and the sweep is one indexed
+    range delete. A failure here must never fail the caller's request — the
+    only cost of a missed sweep is that stale rows are dropped a bit later.
+    """
+    try:
+        removed = await db.purge_expired_job_search_listings(utcnow_iso())
+        if removed:
+            logger.info("Purged %d expired job search listing(s)", removed)
+    except DatabaseBusyError:
+        logger.warning("Skipped job search listing purge: database busy")
+    except Exception:
+        logger.exception("Failed to purge expired job search listings")
 
 
 def _defaults() -> dict[str, Any]:
@@ -219,6 +256,7 @@ async def get_job_search_options() -> JobSearchOptionsResponse:
         ],
         max_results_wanted=MAX_RESULTS_WANTED,
         cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        retention_days=RETENTION_DAYS,
     )
 
 
@@ -314,6 +352,8 @@ async def run_job_search(
 
     _require_searchable(prefs)
 
+    await _purge_expired()
+
     params = _build_scrape_params(prefs)
     try:
         results = await run_in_threadpool(run_search, params)
@@ -327,21 +367,116 @@ async def run_job_search(
         ) from exc
 
     searched_at = utcnow_iso()
+
+    # Persist before stamping the cooldown. If the write fails the user has not
+    # spent their four hours, which is the right way round: a scrape whose
+    # results were dropped is worse than one that can be retried.
+    try:
+        merged = await db.record_job_search_results(
+            results,
+            searched_at=searched_at,
+            expires_at=_expiry_from(searched_at),
+            user_id=user.id,
+        )
+    except DatabaseBusyError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to store job search results")
+        raise HTTPException(
+            status_code=500,
+            detail="The search ran but its results could not be saved. Please try again.",
+        ) from exc
+
     try:
         await db.mark_job_search_run(searched_at, user_id=user.id)
     except DatabaseBusyError:
         raise
     except Exception:
-        # The results are already in hand; failing the request here would throw
-        # away a scrape the user cannot repeat for four hours.
+        # The results are stored; failing here would hide them behind an error
+        # for a scrape the user cannot repeat for four hours.
         logger.exception("Failed to record job search cooldown timestamp")
 
+    listings = merged["listings"]
     return JobSearchRunResponse(
-        results=[JobSearchResult(**result) for result in results],
-        count=len(results),
+        listings=[JobSearchListing(**listing) for listing in listings],
+        count=len(listings),
+        new_count=merged["new_count"],
+        duplicate_count=merged["duplicate_count"],
+        retention_days=RETENTION_DAYS,
         searched_at=searched_at,
         seconds_until_next_run=SEARCH_COOLDOWN_SECONDS,
         cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+    )
+
+
+@router.get("/results", response_model=JobSearchListingsResponse)
+async def get_job_search_results(
+    user: AuthUser = Depends(get_current_user),
+) -> JobSearchListingsResponse:
+    """The caller's stored listings — what the page shows on load.
+
+    This is the endpoint that makes the cooldown liveable: every posting found
+    by an earlier search is still here, so the user can work through them for
+    the whole four hours instead of losing them with the page.
+    """
+    await _purge_expired()
+    try:
+        listings = await db.list_job_search_listings(user_id=user.id)
+        prefs, _ = await _load_preferences(user.id)
+    except DatabaseBusyError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to load stored job search results")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to load saved job results. Please try again.",
+        ) from exc
+
+    remaining = _seconds_until_next_run(prefs.get("last_run_at"))
+    return JobSearchListingsResponse(
+        listings=[JobSearchListing(**listing) for listing in listings],
+        count=len(listings),
+        new_count=sum(1 for listing in listings if listing["is_new"]),
+        retention_days=RETENTION_DAYS,
+        last_run_at=prefs.get("last_run_at"),
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        seconds_until_next_run=remaining,
+        can_search=remaining == 0,
+    )
+
+
+@router.delete("/results", response_model=JobSearchListingsResponse)
+async def clear_job_search_results(
+    user: AuthUser = Depends(get_current_writer),
+) -> JobSearchListingsResponse:
+    """Drop the caller's listing cache.
+
+    Clearing does not undo anything already saved: the ``Job`` rows and tracker
+    cards created by ``/save`` are independent records. It only forgets what
+    has been seen — so the next search treats everything as new again.
+    """
+    try:
+        await db.clear_job_search_listings(user_id=user.id)
+        prefs, _ = await _load_preferences(user.id)
+    except DatabaseBusyError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to clear stored job search results")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to clear saved job results. Please try again.",
+        ) from exc
+
+    remaining = _seconds_until_next_run(prefs.get("last_run_at"))
+    return JobSearchListingsResponse(
+        listings=[],
+        count=0,
+        new_count=0,
+        retention_days=RETENTION_DAYS,
+        last_run_at=prefs.get("last_run_at"),
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        seconds_until_next_run=remaining,
+        can_search=remaining == 0,
     )
 
 
@@ -350,22 +485,41 @@ async def save_job_search_result(
     request: JobSearchSaveRequest,
     user: AuthUser = Depends(get_current_writer),
 ) -> JobSearchSaveResponse:
-    """Save one result as a Job, and optionally as a 'saved' tracker card."""
-    result = request.result.model_dump()
-    content = build_job_content(result)
+    """Save a stored listing as a Job, and optionally as a 'saved' tracker card.
+
+    Takes a ``listing_id`` rather than a posting body: the listing is already
+    persisted, so the server reads it from the cache instead of trusting a
+    client-supplied copy. What the save produced is written back onto the
+    listing, so the UI still shows "Saved" / "In Tracker" after a reload.
+    """
+    listing = await db.get_job_search_listing(request.listing_id, user_id=user.id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Job listing not found")
+
+    content = build_job_content(listing)
 
     if not request.add_to_tracker:
+        # Replaying a save must not create a second Job for the same listing.
+        if listing["saved_job_id"]:
+            return JobSearchSaveResponse(
+                job_id=listing["saved_job_id"],
+                application_id=listing["application_id"],
+                listing_id=listing["listing_id"],
+            )
         try:
             job = await db.create_job(content, user_id=user.id)
             await db.update_job(
                 job["job_id"],
                 {
-                    "company": result.get("company"),
-                    "role": result.get("title"),
-                    "source_url": result.get("job_url"),
-                    "source_site": result.get("site"),
+                    "company": listing.get("company"),
+                    "role": listing.get("title"),
+                    "source_url": listing.get("job_url"),
+                    "source_site": listing.get("site"),
                 },
                 user_id=user.id,
+            )
+            await db.mark_job_search_listing_saved(
+                listing["listing_id"], job_id=job["job_id"], user_id=user.id
             )
         except DatabaseBusyError:
             raise
@@ -375,7 +529,18 @@ async def save_job_search_result(
                 status_code=500,
                 detail="Failed to save this job. Please try again.",
             ) from exc
-        return JobSearchSaveResponse(job_id=job["job_id"])
+        return JobSearchSaveResponse(
+            job_id=job["job_id"],
+            application_id=None,
+            listing_id=listing["listing_id"],
+        )
+
+    if listing["application_id"]:
+        return JobSearchSaveResponse(
+            job_id=listing["saved_job_id"] or "",
+            application_id=listing["application_id"],
+            listing_id=listing["listing_id"],
+        )
 
     resume_id = request.resume_id
     if not resume_id:
@@ -392,9 +557,15 @@ async def save_job_search_result(
             content=content,
             resume_id=resume_id,
             status="saved",
-            company=result.get("company"),
-            role=result.get("title"),
-            notes=result.get("job_url"),
+            company=listing.get("company"),
+            role=listing.get("title"),
+            notes=listing.get("job_url"),
+            user_id=user.id,
+        )
+        await db.mark_job_search_listing_saved(
+            listing["listing_id"],
+            job_id=application["job_id"],
+            application_id=application["application_id"],
             user_id=user.id,
         )
     except DatabaseBusyError:
@@ -409,4 +580,5 @@ async def save_job_search_result(
     return JobSearchSaveResponse(
         job_id=application["job_id"],
         application_id=application["application_id"],
+        listing_id=listing["listing_id"],
     )

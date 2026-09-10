@@ -18,7 +18,8 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Final
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from app.job_search_options import (
     COUNTRIES,
@@ -42,7 +43,9 @@ __all__ = [
     "SITES",
     "JobSearchError",
     "build_job_content",
+    "dedupe_key_for",
     "dedupe_results",
+    "fingerprint_url",
     "normalize_results",
     "run_search",
     "utcnow_iso",
@@ -135,6 +138,76 @@ def normalize_results(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return results
 
 
+# Tracking/analytics query parameters the boards append to the same posting,
+# which would otherwise make one job look like several.
+_TRACKING_PARAMS: Final[frozenset[str]] = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_content",
+        "utm_term",
+        "refid",
+        "ref",
+        "source",
+        "src",
+        "trk",
+        "trackingId",
+        "refId",
+        "position",
+        "pageNum",
+        # Indeed
+        "from",
+        "tk",
+        "jsa",
+        "vjs",
+        "advn",
+        "adid",
+        "alid",
+        # Ad-network click ids
+        "gclid",
+        "fbclid",
+        # LinkedIn result-set coordinates (not the job id, which is in the path)
+        "rq",
+        "rsIdx",
+        "eBP",
+    }
+)
+
+
+def fingerprint_url(job_url: str) -> str:
+    """Reduce a posting URL to a stable identity.
+
+    The boards append rotating tracking parameters to the same posting, so a
+    raw URL comparison would treat one job as many. Scheme and 'www.' are also
+    normalised away, and the query is rebuilt from the parameters that actually
+    identify the listing.
+    """
+    parsed = urlsplit(job_url.strip())
+    host = (parsed.netloc or "").lower().removeprefix("www.")
+    path = (parsed.path or "").rstrip("/")
+    kept = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=False)
+        if key not in _TRACKING_PARAMS
+    ]
+    query = urlencode(sorted(kept))
+    return f"{host}{path}?{query}" if query else f"{host}{path}"
+
+
+def dedupe_key_for(result: dict[str, Any]) -> str | None:
+    """Company+title identity, or None when the company is unknown.
+
+    Used to suppress the same role syndicated to several boards. Returns None
+    without a company, because title alone collapses unrelated postings.
+    """
+    company = (result.get("company") or "").strip().lower()
+    title = (result.get("title") or "").strip().lower()
+    if not company or not title:
+        return None
+    return f"{company}|{title}"
+
+
 def dedupe_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop repeats of the same posting, keeping first-seen order.
 
@@ -143,18 +216,16 @@ def dedupe_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     duplicates that carry different tracking URLs.
     """
     seen_urls: set[str] = set()
-    seen_pairs: set[tuple[str, str]] = set()
+    seen_keys: set[str] = set()
     unique: list[dict[str, Any]] = []
     for result in results:
-        url = result["job_url"]
-        company = (result.get("company") or "").strip().lower()
-        title = (result.get("title") or "").strip().lower()
-        pair = (company, title)
-        if url in seen_urls or (company and pair in seen_pairs):
+        url = fingerprint_url(result["job_url"])
+        key = dedupe_key_for(result)
+        if url in seen_urls or (key is not None and key in seen_keys):
             continue
         seen_urls.add(url)
-        if company:
-            seen_pairs.add(pair)
+        if key is not None:
+            seen_keys.add(key)
         unique.append(result)
     return unique
 

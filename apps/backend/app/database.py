@@ -48,6 +48,7 @@ from app.models import (
     Application,
     Improvement,
     Job,
+    JobSearchListing,
     JobSearchPreference,
     Resume,
     TailoringPreview,
@@ -1560,6 +1561,228 @@ class Database:
             row.last_run_at = ran_at
             row.updated_at = _now()
             await session.commit()
+
+
+    # --- Job search listings (the per-user result cache) ---------------------
+
+    @staticmethod
+    def _job_search_listing_to_dict(row: JobSearchListing) -> dict[str, Any]:
+        """Flatten a listing row, dropping the ``user_id`` partition key."""
+        return {
+            "listing_id": row.listing_id,
+            "site": row.site,
+            "title": row.title,
+            "company": row.company,
+            "company_url": row.company_url,
+            "location": row.location,
+            "job_url": row.job_url,
+            "job_url_direct": row.job_url_direct,
+            "job_type": row.job_type,
+            "date_posted": row.date_posted,
+            "is_remote": row.is_remote,
+            "min_amount": row.min_amount,
+            "max_amount": row.max_amount,
+            "currency": row.currency,
+            "interval": row.interval,
+            "description": row.description,
+            "first_seen_at": row.first_seen_at,
+            "last_seen_at": row.last_seen_at,
+            "times_seen": row.times_seen,
+            "is_new": row.is_new,
+            "expires_at": row.expires_at,
+            "saved_job_id": row.saved_job_id,
+            "application_id": row.application_id,
+        }
+
+    async def purge_expired_job_search_listings(self, now: str) -> int:
+        """Delete listings past their retention window. Returns rows removed.
+
+        Timestamps are ISO-8601 UTC strings, which compare correctly
+        lexically, so this is a plain indexed range delete.
+        """
+        async with self._write_session() as session:
+            result = await session.execute(
+                delete(JobSearchListing).where(JobSearchListing.expires_at <= now)
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
+
+    async def list_job_search_listings(
+        self, *, user_id: str = LOCAL_USER_ID
+    ) -> list[dict[str, Any]]:
+        """This user's cached listings, newest first, unseen ones first.
+
+        Ordering puts the most recent search's finds at the top, which is what
+        the user is looking for when they open the page during a cooldown.
+        """
+        async with self._session() as session:
+            result = await session.execute(
+                select(JobSearchListing)
+                .where(JobSearchListing.user_id == user_id)
+                .order_by(
+                    JobSearchListing.is_new.desc(),
+                    JobSearchListing.first_seen_at.desc(),
+                )
+            )
+            return [
+                self._job_search_listing_to_dict(row) for row in result.scalars().all()
+            ]
+
+    async def record_job_search_results(
+        self,
+        results: list[dict[str, Any]],
+        *,
+        searched_at: str,
+        expires_at: str,
+        user_id: str = LOCAL_USER_ID,
+    ) -> dict[str, Any]:
+        """Merge a scrape into the user's listing cache.
+
+        A posting already in the cache is *not* duplicated: its ``last_seen_at``
+        and ``times_seen`` are updated and it stays un-flagged, which is what
+        makes a repeat search show only what is genuinely new.
+
+        Identity comes from ``fingerprint`` (the normalised URL) and, when the
+        company is known, ``dedupe_key`` (company+title) so the same role found
+        on a second board is recognised as the same job.
+
+        The whole merge is one transaction: ``is_new`` is cleared for the user's
+        existing rows and set on the inserted ones together, so a failure
+        cannot leave stale highlights behind.
+        """
+        from app.services.job_search import dedupe_key_for, fingerprint_url
+
+        async with self._write_session() as session:
+            # The highlight means "new in the latest search", so the previous
+            # run's flags are cleared as part of this run.
+            await session.execute(
+                update(JobSearchListing)
+                .where(
+                    JobSearchListing.user_id == user_id,
+                    JobSearchListing.is_new.is_(True),
+                )
+                .values(is_new=False)
+            )
+
+            existing = (
+                (
+                    await session.execute(
+                        select(JobSearchListing).where(
+                            JobSearchListing.user_id == user_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            by_fingerprint = {row.fingerprint: row for row in existing}
+            by_dedupe_key = {
+                row.dedupe_key: row for row in existing if row.dedupe_key
+            }
+
+            new_rows: list[JobSearchListing] = []
+            for result in results:
+                fingerprint = fingerprint_url(result["job_url"])
+                dedupe_key = dedupe_key_for(result)
+                match = by_fingerprint.get(fingerprint)
+                if match is None and dedupe_key is not None:
+                    match = by_dedupe_key.get(dedupe_key)
+
+                if match is not None:
+                    match.last_seen_at = searched_at
+                    match.times_seen = (match.times_seen or 1) + 1
+                    continue
+
+                row = JobSearchListing(
+                    listing_id=str(uuid4()),
+                    user_id=user_id,
+                    fingerprint=fingerprint,
+                    dedupe_key=dedupe_key,
+                    site=result.get("site"),
+                    title=result.get("title") or "Untitled role",
+                    company=result.get("company"),
+                    company_url=result.get("company_url"),
+                    location=result.get("location"),
+                    job_url=result["job_url"],
+                    job_url_direct=result.get("job_url_direct"),
+                    job_type=result.get("job_type"),
+                    date_posted=result.get("date_posted"),
+                    is_remote=bool(result.get("is_remote")),
+                    min_amount=result.get("min_amount"),
+                    max_amount=result.get("max_amount"),
+                    currency=result.get("currency"),
+                    interval=result.get("interval"),
+                    description=result.get("description"),
+                    first_seen_at=searched_at,
+                    last_seen_at=searched_at,
+                    times_seen=1,
+                    is_new=True,
+                    expires_at=expires_at,
+                )
+                session.add(row)
+                new_rows.append(row)
+                by_fingerprint[fingerprint] = row
+                if dedupe_key is not None:
+                    by_dedupe_key[dedupe_key] = row
+
+            await session.commit()
+            new_count = len(new_rows)
+
+        # Read back through the normal listing path so the response is exactly
+        # what a later GET returns.
+        listings = await self.list_job_search_listings(user_id=user_id)
+        return {
+            "new_count": new_count,
+            "duplicate_count": len(results) - new_count,
+            "listings": listings,
+        }
+
+    async def get_job_search_listing(
+        self, listing_id: str, *, user_id: str = LOCAL_USER_ID
+    ) -> dict[str, Any] | None:
+        """Get one of this user's cached listings by id."""
+        async with self._session() as session:
+            row = await session.scalar(
+                select(JobSearchListing).where(
+                    JobSearchListing.listing_id == listing_id,
+                    JobSearchListing.user_id == user_id,
+                )
+            )
+            return self._job_search_listing_to_dict(row) if row else None
+
+    async def mark_job_search_listing_saved(
+        self,
+        listing_id: str,
+        *,
+        job_id: str | None = None,
+        application_id: str | None = None,
+        user_id: str = LOCAL_USER_ID,
+    ) -> dict[str, Any] | None:
+        """Record what a save produced, so the UI still shows it after reload."""
+        async with self._write_session() as session:
+            row = await session.scalar(
+                select(JobSearchListing).where(
+                    JobSearchListing.listing_id == listing_id,
+                    JobSearchListing.user_id == user_id,
+                )
+            )
+            if row is None:
+                return None
+            if job_id is not None:
+                row.saved_job_id = job_id
+            if application_id is not None:
+                row.application_id = application_id
+            await session.commit()
+            return self._job_search_listing_to_dict(row)
+
+    async def clear_job_search_listings(self, *, user_id: str = LOCAL_USER_ID) -> int:
+        """Drop this user's whole listing cache. Returns rows removed."""
+        async with self._write_session() as session:
+            result = await session.execute(
+                delete(JobSearchListing).where(JobSearchListing.user_id == user_id)
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
 
 
 # Global database instance

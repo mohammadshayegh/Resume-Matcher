@@ -12,7 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
-from app.routers.job_search import SEARCH_COOLDOWN_SECONDS
+from app.routers.job_search import RETENTION_DAYS, SEARCH_COOLDOWN_SECONDS
 
 BASE = "/api/v1/job-search"
 
@@ -204,7 +204,9 @@ class TestRun:
         assert resp.status_code == 200
         body = resp.json()
         assert body["count"] == 1
-        assert body["results"][0]["company"] == "Acme"
+        assert body["new_count"] == 1
+        assert body["listings"][0]["company"] == "Acme"
+        assert body["retention_days"] == RETENTION_DAYS
         assert scrape.call_count == 1
 
     async def test_passes_saved_preferences_through_to_jobspy(
@@ -341,14 +343,24 @@ class TestRun:
 
 
 class TestSaveResult:
-    """POST /job-search/save."""
+    """POST /job-search/save — operates on a stored listing."""
 
-    async def test_saves_a_result_as_a_job(
+    async def _seed_listing(self, client: AsyncClient) -> dict[str, Any]:
+        """Store one listing via a real run. Expects an already-open client."""
+        await client.put(f"{BASE}/preferences", json=_valid_prefs())
+        with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+            resp = await client.post(f"{BASE}/run")
+        assert resp.status_code == 200, resp.text
+        return resp.json()["listings"][0]
+
+    async def test_saves_a_listing_as_a_job(
         self, client: AsyncClient, isolated_db: Any
     ) -> None:
         async with client:
+            listing = await self._seed_listing(client)
             resp = await client.post(
-                f"{BASE}/save", json={"result": _scraped(), "add_to_tracker": False}
+                f"{BASE}/save",
+                json={"listing_id": listing["listing_id"], "add_to_tracker": False},
             )
             assert resp.status_code == 200
             job_id = resp.json()["job_id"]
@@ -361,12 +373,49 @@ class TestSaveResult:
         assert "Senior Python Engineer" in body["content"]
         assert "Acme" in body["content"]
 
-    async def test_tracker_save_requires_a_resume(
+    async def test_save_is_recorded_on_the_listing_so_it_survives_reload(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            listing = await self._seed_listing(client)
+            saved = await client.post(
+                f"{BASE}/save", json={"listing_id": listing["listing_id"]}
+            )
+            results = await client.get(f"{BASE}/results")
+        stored = results.json()["listings"][0]
+        assert stored["saved_job_id"] == saved.json()["job_id"]
+
+    async def test_saving_twice_does_not_create_a_second_job(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # Double-clicking "Save" must not litter the tailor picker with copies.
+        async with client:
+            listing = await self._seed_listing(client)
+            first = await client.post(
+                f"{BASE}/save", json={"listing_id": listing["listing_id"]}
+            )
+            second = await client.post(
+                f"{BASE}/save", json={"listing_id": listing["listing_id"]}
+            )
+        assert first.json()["job_id"] == second.json()["job_id"]
+
+    async def test_unknown_listing_is_rejected(
         self, client: AsyncClient, isolated_db: Any
     ) -> None:
         async with client:
             resp = await client.post(
-                f"{BASE}/save", json={"result": _scraped(), "add_to_tracker": True}
+                f"{BASE}/save", json={"listing_id": "does-not-exist"}
+            )
+        assert resp.status_code == 404
+
+    async def test_tracker_save_requires_a_resume(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            listing = await self._seed_listing(client)
+            resp = await client.post(
+                f"{BASE}/save",
+                json={"listing_id": listing["listing_id"], "add_to_tracker": True},
             )
         assert resp.status_code == 400
         assert "resume" in resp.json()["detail"].lower()
@@ -380,10 +429,11 @@ class TestSaveResult:
             content="# Resume", is_master=True, user_id="local"
         )
         async with client:
+            listing = await self._seed_listing(client)
             resp = await client.post(
                 f"{BASE}/save",
                 json={
-                    "result": _scraped(),
+                    "listing_id": listing["listing_id"],
                     "add_to_tracker": True,
                     "resume_id": resume["resume_id"],
                 },
@@ -395,3 +445,290 @@ class TestSaveResult:
         assert card["status"] == "saved"
         assert card["company"] == "Acme"
         assert card["role"] == "Senior Python Engineer"
+
+    async def test_tracker_save_is_recorded_on_the_listing(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        from app.database import db
+
+        await db.create_resume(content="# Resume", is_master=True, user_id="local")
+        async with client:
+            listing = await self._seed_listing(client)
+            saved = await client.post(
+                f"{BASE}/save",
+                json={"listing_id": listing["listing_id"], "add_to_tracker": True},
+            )
+            results = await client.get(f"{BASE}/results")
+        stored = results.json()["listings"][0]
+        assert stored["application_id"] == saved.json()["application_id"]
+
+
+class TestStoredResults:
+    """GET/DELETE /job-search/results — the cache that outlives the page."""
+
+    async def _run_with(
+        self, client: AsyncClient, rows: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        with patch("app.routers.job_search.run_search", return_value=rows):
+            resp = await client.post(f"{BASE}/run")
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    async def _reset_cooldown(self) -> None:
+        from app.database import db
+
+        stale = datetime.now(timezone.utc) - timedelta(
+            seconds=SEARCH_COOLDOWN_SECONDS + 60
+        )
+        await db.mark_job_search_run(stale.isoformat(), user_id="local")
+
+    async def test_results_are_empty_before_any_search(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            resp = await client.get(f"{BASE}/results")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["listings"] == []
+        assert body["retention_days"] == RETENTION_DAYS
+
+    async def test_results_survive_the_request_that_found_them(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # This is the whole point: during the cooldown the user must still be
+        # able to see what the last search found.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped(), _scraped(id="in-2", job_url="https://example.com/jobs/2", title="Backend Engineer")])
+            resp = await client.get(f"{BASE}/results")
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["can_search"] is False  # still inside the cooldown
+        assert {listing["title"] for listing in body["listings"]} == {
+            "Senior Python Engineer",
+            "Backend Engineer",
+        }
+
+    async def test_a_repeat_search_does_not_duplicate_known_postings(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # The reported bug: searching again re-showed the same jobs.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            first = await self._run_with(client, [_scraped()])
+            assert first["new_count"] == 1
+
+            await self._reset_cooldown()
+            second = await self._run_with(client, [_scraped()])
+
+        assert second["count"] == 1  # not 2
+        assert second["new_count"] == 0
+        assert second["duplicate_count"] == 1
+        assert second["listings"][0]["times_seen"] == 2
+
+    async def test_tracking_parameters_do_not_defeat_dedupe(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # The boards append rotating tracking ids to the same posting.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(
+                client,
+                [_scraped(job_url="https://www.indeed.com/viewjob?jk=abc&tk=111")],
+            )
+            await self._reset_cooldown()
+            second = await self._run_with(
+                client,
+                [_scraped(job_url="https://indeed.com/viewjob?jk=abc&tk=999&from=serp")],
+            )
+        assert second["count"] == 1
+        assert second["new_count"] == 0
+
+    async def test_the_same_role_on_another_board_is_not_a_new_job(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped(site="indeed")])
+            await self._reset_cooldown()
+            second = await self._run_with(
+                client,
+                [
+                    _scraped(
+                        site="linkedin",
+                        id="li-1",
+                        job_url="https://linkedin.com/jobs/view/1",
+                    )
+                ],
+            )
+        assert second["count"] == 1
+        assert second["new_count"] == 0
+
+    async def test_a_genuinely_new_posting_is_added_and_flagged(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped()])
+            await self._reset_cooldown()
+            second = await self._run_with(
+                client,
+                [
+                    _scraped(),
+                    _scraped(
+                        id="in-2",
+                        job_url="https://example.com/jobs/2",
+                        title="Staff Engineer",
+                        company="Globex",
+                    ),
+                ],
+            )
+        assert second["count"] == 2
+        assert second["new_count"] == 1
+        flagged = [listing for listing in second["listings"] if listing["is_new"]]
+        assert [listing["title"] for listing in flagged] == ["Staff Engineer"]
+
+    async def test_the_new_flag_is_cleared_by_the_next_search(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # "New" means new in the latest search, not new ever.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped()])
+            await self._reset_cooldown()
+            second = await self._run_with(
+                client,
+                [
+                    _scraped(
+                        id="in-2",
+                        job_url="https://example.com/jobs/2",
+                        title="Staff Engineer",
+                        company="Globex",
+                    )
+                ],
+            )
+        by_title = {listing["title"]: listing for listing in second["listings"]}
+        assert by_title["Staff Engineer"]["is_new"] is True
+        assert by_title["Senior Python Engineer"]["is_new"] is False
+
+    async def test_new_listings_sort_above_older_ones(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped()])
+            await self._reset_cooldown()
+            await self._run_with(
+                client,
+                [
+                    _scraped(
+                        id="in-2",
+                        job_url="https://example.com/jobs/2",
+                        title="Staff Engineer",
+                        company="Globex",
+                    )
+                ],
+            )
+            resp = await client.get(f"{BASE}/results")
+        assert resp.json()["listings"][0]["title"] == "Staff Engineer"
+
+    async def test_clearing_the_cache_makes_everything_new_again(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            await self._run_with(client, [_scraped()])
+            cleared = await client.delete(f"{BASE}/results")
+            assert cleared.status_code == 200
+            assert cleared.json()["count"] == 0
+
+            await self._reset_cooldown()
+            again = await self._run_with(client, [_scraped()])
+        assert again["new_count"] == 1
+
+    async def test_clearing_the_cache_keeps_jobs_already_saved(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # The cache is a search cache; a saved Job is a real record.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            run = await self._run_with(client, [_scraped()])
+            saved = await client.post(
+                f"{BASE}/save",
+                json={"listing_id": run["listings"][0]["listing_id"]},
+            )
+            job_id = saved.json()["job_id"]
+            await client.delete(f"{BASE}/results")
+            job = await client.get(f"/api/v1/jobs/{job_id}")
+        assert job.status_code == 200
+
+    async def test_a_failed_store_does_not_spend_the_cooldown(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        # Dropping the results AND the four hours would be the worst outcome.
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                with patch(
+                    "app.routers.job_search.db.record_job_search_results",
+                    side_effect=RuntimeError("disk full"),
+                ):
+                    failed = await client.post(f"{BASE}/run")
+                assert failed.status_code == 500
+                retry = await client.post(f"{BASE}/run")
+        assert retry.status_code == 200
+
+
+class TestRetention:
+    """Listings are kept for RETENTION_DAYS, then purged."""
+
+    async def test_a_listing_expires_two_weeks_after_it_is_first_seen(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                run = await client.post(f"{BASE}/run")
+        listing = run.json()["listings"][0]
+        first_seen = datetime.fromisoformat(listing["first_seen_at"])
+        expires = datetime.fromisoformat(listing["expires_at"])
+        assert expires - first_seen == timedelta(days=RETENTION_DAYS)
+        assert RETENTION_DAYS == 14
+
+    async def test_expired_listings_are_purged_on_read(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        from app.database import db
+
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                await client.post(f"{BASE}/run")
+
+            # Age the row past its window rather than waiting two weeks.
+            listings = await db.list_job_search_listings(user_id="local")
+            expired = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            from sqlalchemy import update as sa_update
+
+            from app.models import JobSearchListing as ListingModel
+
+            async with db._write_session() as session:  # noqa: SLF001 - test seam
+                await session.execute(
+                    sa_update(ListingModel)
+                    .where(ListingModel.listing_id == listings[0]["listing_id"])
+                    .values(expires_at=expired)
+                )
+                await session.commit()
+
+            resp = await client.get(f"{BASE}/results")
+        assert resp.json()["listings"] == []
+
+    async def test_a_live_listing_is_not_purged(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            await client.put(f"{BASE}/preferences", json=_valid_prefs())
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                await client.post(f"{BASE}/run")
+            resp = await client.get(f"{BASE}/results")
+        assert resp.json()["count"] == 1

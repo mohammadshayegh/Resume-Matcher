@@ -32,6 +32,7 @@ class JobSearchOptionsResponse(BaseModel):
     description_formats: list[JobSearchOption]
     max_results_wanted: int
     cooldown_seconds: int
+    retention_days: int
 
 
 class JobSearchPreferencesBase(BaseModel):
@@ -142,10 +143,14 @@ class JobSearchStatusResponse(BaseModel):
     configured: bool
 
 
-class JobSearchResult(BaseModel):
-    """One normalised posting returned by a scrape."""
+class JobSearchPosting(BaseModel):
+    """The posting fields every board is normalised onto.
 
-    id: str
+    Shared by the scrape shape (:class:`JobSearchResult`, which adds the
+    board's own id) and the stored shape (:class:`JobSearchListing`, which
+    replaces it with a ``listing_id`` and adds when it was seen).
+    """
+
     site: str | None = None
     title: str
     company: str | None = None
@@ -163,23 +168,71 @@ class JobSearchResult(BaseModel):
     description: str | None = None
 
 
-class JobSearchRunResponse(BaseModel):
-    """Outcome of a scrape, with the refreshed cooldown clock."""
+class JobSearchResult(JobSearchPosting):
+    """One normalised posting returned by a scrape, keyed by the board's id."""
 
-    results: list[JobSearchResult]
+    id: str
+
+
+class JobSearchListing(JobSearchPosting):
+    """A stored posting: a result plus how and when it was seen.
+
+    Every scraped posting becomes one of these, so results survive the page
+    and the four-hour cooldown, and a repeat search can distinguish a new
+    posting from one already in the cache.
+    """
+
+    listing_id: str
+    first_seen_at: str
+    last_seen_at: str
+    # How many searches have returned this posting; 1 means "found once".
+    times_seen: int
+    # True for the postings the most recent search found for the first time.
+    is_new: bool
+    expires_at: str
+    # Set once saved, so "Saved" / "In Tracker" survives a reload.
+    saved_job_id: str | None = None
+    application_id: str | None = None
+
+
+class JobSearchListingsResponse(BaseModel):
+    """The caller's stored listings, plus retention and cooldown context."""
+
+    listings: list[JobSearchListing]
     count: int
+    new_count: int
+    retention_days: int
+    last_run_at: str | None = None
+    cooldown_seconds: int
+    seconds_until_next_run: int
+    can_search: bool
+
+
+class JobSearchRunResponse(BaseModel):
+    """Outcome of a scrape: what was stored, and the refreshed clock.
+
+    ``listings`` is the caller's *whole* cache, not just this run's finds, so
+    the page renders the same set a later GET would return. ``new_count`` and
+    ``duplicate_count`` report what this run actually added.
+    """
+
+    listings: list[JobSearchListing]
+    count: int
+    new_count: int
+    duplicate_count: int
+    retention_days: int
     searched_at: str
     seconds_until_next_run: int
     cooldown_seconds: int
 
 
 class JobSearchSaveRequest(BaseModel):
-    """Persist one result as a Job, optionally as a tracker card too."""
+    """Persist a stored listing as a Job, optionally as a tracker card too."""
 
-    result: JobSearchResult
+    listing_id: str
     add_to_tracker: bool = False
     # Which resume the tracker card is filed against. Defaults to the caller's
-    # master resume, which is what the board's "Saved" column implies.
+    # master resume, which is what the tracker's "Saved" column implies.
     resume_id: str | None = None
 
 
@@ -188,3 +241,4 @@ class JobSearchSaveResponse(BaseModel):
 
     job_id: str
     application_id: str | None = None
+    listing_id: str

@@ -238,3 +238,77 @@ class JobSearchPreference(Base):
     last_run_at: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
     updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
+
+
+class JobSearchListing(Base):
+    """A job posting found by a search, cached per user.
+
+    Results are persisted rather than returned once and forgotten, for two
+    reasons: the four-hour cooldown means a lost result set cannot simply be
+    re-fetched, and a repeat search must be able to tell a genuinely new
+    posting from one the user has already seen.
+
+    Two dedupe keys, because the boards do not agree on either alone:
+
+    * ``fingerprint`` — the normalised ``job_url``. Unique per user, so the
+      same posting can never be stored twice.
+    * ``dedupe_key`` — normalised ``company|title``. Not unique (a repeat
+      search legitimately re-finds it), but checked on insert to suppress the
+      same role syndicated to several boards under different tracking URLs.
+
+    ``is_new`` marks the rows first seen by the *most recent* search: it is
+    cleared for the user's whole set at the start of a run and set on the rows
+    that run inserted. It is a column rather than a computed value so the
+    highlight survives a page reload during the cooldown.
+
+    Rows expire ``RETENTION_DAYS`` after they were first seen and are purged
+    opportunistically. Purging a listing does not touch anything the user
+    explicitly saved — the ``Job`` row and tracker card created by
+    ``/job-search/save`` are independent records — it only drops the search
+    cache entry.
+    """
+
+    __tablename__ = "job_search_listings"
+    __table_args__ = (
+        # One row per posting per user. The app-level check-then-insert relies
+        # on this to collapse races within a single run.
+        UniqueConstraint("user_id", "fingerprint", name="uq_listing_user_fingerprint"),
+        # Covers the "what has this user already seen" lookup and the
+        # cross-board suppression check.
+        Index("ix_listing_user_dedupe", "user_id", "dedupe_key"),
+        # Covers the retention sweep.
+        Index("ix_listing_expiry", "expires_at"),
+    )
+
+    listing_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    fingerprint: Mapped[str] = mapped_column(String)
+    dedupe_key: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    site: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String)
+    company: Mapped[str | None] = mapped_column(String, nullable=True)
+    company_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    job_url: Mapped[str] = mapped_column(String)
+    job_url_direct: Mapped[str | None] = mapped_column(String, nullable=True)
+    job_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    date_posted: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    min_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency: Mapped[str | None] = mapped_column(String, nullable=True)
+    interval: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    first_seen_at: Mapped[str] = mapped_column(String)
+    last_seen_at: Mapped[str] = mapped_column(String)
+    # How many searches have returned this posting; 1 means "found once".
+    times_seen: Mapped[int] = mapped_column(Integer, default=1)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[str] = mapped_column(String)
+
+    # Set once the user saves the listing, so the UI can still show "Saved" /
+    # "In Tracker" after a reload.
+    saved_job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    application_id: Mapped[str | None] = mapped_column(String, nullable=True)
