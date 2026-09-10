@@ -132,12 +132,15 @@ ENV CODEX_HOME=/app/backend/data/.codex
 # Backend Setup
 # ============================================
 COPY apps/backend/pyproject.toml /app/backend/
+COPY apps/backend/docker-overrides.txt /app/backend/
 COPY apps/backend/app /app/backend/app
 
 WORKDIR /app/backend
 
-# Install Python dependencies
-RUN pip install .
+# Install Python dependencies. python-jobspy's published NumPy 1.26 pin has
+# no CPython 3.13 wheel; use uv's resolver with the project override instead.
+RUN pip install uv \
+    && uv pip install --system --override docker-overrides.txt .
 
 # ============================================
 # Frontend Setup

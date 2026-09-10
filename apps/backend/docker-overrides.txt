@@ -1,0 +1,4 @@
+# python-jobspy 1.1.82 declares an obsolete NumPy pin (==1.26.3) that has no
+# CPython 3.13 wheel. JobSpy only uses np.round, so use the supported NumPy 2.x
+# line selected by the project resolver instead.
+numpy>=2.1.0
