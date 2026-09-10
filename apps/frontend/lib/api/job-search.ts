@@ -114,6 +114,8 @@ export interface JobSearchListingsResponse {
   cooldown_seconds: number;
   seconds_until_next_run: number;
   can_search: boolean;
+  /** Whether enough settings are saved for a search to be possible. */
+  configured: boolean;
 }
 
 export interface JobSearchRunResponse {

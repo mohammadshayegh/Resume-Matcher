@@ -24,11 +24,11 @@ import {
   ExternalLink,
   Clock,
   MapPin,
-  AlertTriangle,
   CheckCircle2,
   Settings2,
   Briefcase,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 
 import {
@@ -52,6 +52,7 @@ export default function JobSearchPage() {
 
   const [listings, setListings] = useState<JobSearchListing[]>([]);
   const [retentionDays, setRetentionDays] = useState(14);
+  const [configured, setConfigured] = useState(true);
   const [remaining, setRemaining] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -66,6 +67,7 @@ export default function JobSearchPage() {
     setListings(response.listings);
     setRetentionDays(response.retention_days);
     setRemaining(response.seconds_until_next_run);
+    setConfigured(response.configured);
   }, []);
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export default function JobSearchPage() {
         setListings(response.listings);
         setRetentionDays(response.retention_days);
         setRemaining(response.seconds_until_next_run);
+        setConfigured(response.configured);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -154,6 +157,7 @@ export default function JobSearchPage() {
       const response = await clearJobSearchResults();
       setListings(response.listings);
       setRemaining(response.seconds_until_next_run);
+      setConfigured(response.configured);
       setFilter('all');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -220,6 +224,15 @@ export default function JobSearchPage() {
               </Button>
             </Link>
           </div>
+
+          {!loading && !configured && (
+            <div className="border-2 border-amber-500 bg-amber-50 p-4">
+              <p className="flex items-start gap-2 font-mono text-xs text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {t('jobSearch.notConfigured')}
+              </p>
+            </div>
+          )}
 
           {notice && (
             <div className="border border-black bg-white p-3">

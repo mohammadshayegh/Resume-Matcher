@@ -193,6 +193,7 @@ describe('job search API client', () => {
         cooldown_seconds: 14400,
         seconds_until_next_run: 11520,
         can_search: false,
+        configured: true,
       })
     );
 
@@ -215,6 +216,7 @@ describe('job search API client', () => {
         cooldown_seconds: 14400,
         seconds_until_next_run: 0,
         can_search: true,
+        configured: true,
       })
     );
 
