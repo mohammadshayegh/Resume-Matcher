@@ -48,6 +48,7 @@ from app.models import (
     Application,
     Improvement,
     Job,
+    JobSearchPreference,
     Resume,
     TailoringPreview,
 )
@@ -1474,6 +1475,91 @@ class Database:
         if uploads_dir.exists():
             shutil.rmtree(uploads_dir)
             uploads_dir.mkdir(parents=True, exist_ok=True)
+
+
+    # --- Job search preferences ---------------------------------------------
+
+    # Columns a client is allowed to write. ``last_run_at`` is deliberately
+    # absent: the cooldown clock is set by the server on a completed scrape, so
+    # a crafted preferences payload cannot clear it.
+    _JOB_SEARCH_FIELDS = (
+        "search_term",
+        "google_search_term",
+        "location",
+        "sites",
+        "distance",
+        "job_type",
+        "is_remote",
+        "results_wanted",
+        "hours_old",
+        "country_indeed",
+        "description_format",
+        "easy_apply",
+        "linkedin_fetch_description",
+        "enforce_annual_salary",
+        "offset",
+        "proxies",
+    )
+
+    @staticmethod
+    def _job_search_prefs_to_dict(row: JobSearchPreference) -> dict[str, Any]:
+        """Flatten a preferences row, dropping the ``user_id`` partition key."""
+        return {
+            "search_term": row.search_term,
+            "google_search_term": row.google_search_term,
+            "location": row.location,
+            "sites": list(row.sites or []),
+            "distance": row.distance,
+            "job_type": row.job_type,
+            "is_remote": row.is_remote,
+            "results_wanted": row.results_wanted,
+            "hours_old": row.hours_old,
+            "country_indeed": row.country_indeed,
+            "description_format": row.description_format,
+            "easy_apply": row.easy_apply,
+            "linkedin_fetch_description": row.linkedin_fetch_description,
+            "enforce_annual_salary": row.enforce_annual_salary,
+            "offset": row.offset,
+            "proxies": list(row.proxies or []),
+            "last_run_at": row.last_run_at,
+        }
+
+    async def get_job_search_preferences(
+        self, *, user_id: str = LOCAL_USER_ID
+    ) -> dict[str, Any] | None:
+        """Return this user's saved search parameters, or None if never saved."""
+        async with self._session() as session:
+            row = await session.get(JobSearchPreference, user_id)
+            return self._job_search_prefs_to_dict(row) if row else None
+
+    async def save_job_search_preferences(
+        self, values: dict[str, Any], *, user_id: str = LOCAL_USER_ID
+    ) -> dict[str, Any]:
+        """Upsert this user's search parameters, preserving ``last_run_at``."""
+        async with self._write_session() as session:
+            row = await session.get(JobSearchPreference, user_id)
+            if row is None:
+                row = JobSearchPreference(user_id=user_id, created_at=_now())
+                session.add(row)
+            for field in self._JOB_SEARCH_FIELDS:
+                if field in values:
+                    setattr(row, field, values[field])
+            row.updated_at = _now()
+            await session.commit()
+            return self._job_search_prefs_to_dict(row)
+
+    async def mark_job_search_run(
+        self, ran_at: str, *, user_id: str = LOCAL_USER_ID
+    ) -> None:
+        """Stamp the cooldown clock after a scrape completed."""
+        async with self._write_session() as session:
+            row = await session.get(JobSearchPreference, user_id)
+            if row is None:
+                row = JobSearchPreference(user_id=user_id, created_at=_now())
+                session.add(row)
+            row.last_run_at = ran_at
+            row.updated_at = _now()
+            await session.commit()
 
 
 # Global database instance

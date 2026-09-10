@@ -17,6 +17,7 @@ import AlertCircle from 'lucide-react/dist/esm/icons/alert-circle';
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw';
 import Plus from 'lucide-react/dist/esm/icons/plus';
 import Settings from 'lucide-react/dist/esm/icons/settings';
+import Search from 'lucide-react/dist/esm/icons/search';
 import AlertTriangle from 'lucide-react/dist/esm/icons/alert-triangle';
 
 import {
@@ -410,7 +411,8 @@ export default function DashboardPage() {
     return Math.abs(hash);
   };
 
-  const totalCards = 1 + tailoredResumes.length + 1;
+  // master + tailored resumes + "create tailored" + "job search"
+  const totalCards = 1 + tailoredResumes.length + 2;
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -665,6 +667,23 @@ export default function DashboardPage() {
             </p>
           </div>
         </Card>
+
+        {/* 4. Job Search */}
+        <Link href="/job-search" className="block h-full">
+          <Card variant="interactive" className="aspect-square h-full bg-canvas">
+            <div className="flex-1 flex flex-col justify-between">
+              <div className="w-14 h-14 border-2 border-black bg-white flex items-center justify-center mb-4">
+                <Search className="w-7 h-7" />
+              </div>
+              <div>
+                <CardTitle className="text-lg uppercase mb-2">{t('jobSearch.navLabel')}</CardTitle>
+                <CardDescription className="text-xs">
+                  {t('jobSearch.dashboardDescription')}
+                </CardDescription>
+              </div>
+            </div>
+          </Card>
+        </Link>
 
         {/* 4. Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (

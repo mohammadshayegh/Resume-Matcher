@@ -1,5 +1,16 @@
 """Pydantic schemas for request/response models."""
 
+from app.schemas.job_search import (
+    JobSearchOption,
+    JobSearchOptionsResponse,
+    JobSearchPreferencesRequest,
+    JobSearchPreferencesResponse,
+    JobSearchResult,
+    JobSearchRunResponse,
+    JobSearchSaveRequest,
+    JobSearchSaveResponse,
+    JobSearchStatusResponse,
+)
 from app.schemas.models import (
     AdditionalInfo,
     ATSScore,
@@ -77,6 +88,16 @@ from app.schemas.applications import (
 )
 
 __all__ = [
+    "JobSearchOption",
+    "JobSearchOptionsResponse",
+    "JobSearchPreferencesRequest",
+    "JobSearchPreferencesResponse",
+    "JobSearchResult",
+    "JobSearchRunResponse",
+    "JobSearchSaveRequest",
+    "JobSearchSaveResponse",
+    "JobSearchStatusResponse",
+
     "PersonalInfo",
     "Experience",
     "Education",

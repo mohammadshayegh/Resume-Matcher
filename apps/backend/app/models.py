@@ -197,3 +197,44 @@ class ApiKey(Base):
     provider: Mapped[str] = mapped_column(String, primary_key=True)
     ciphertext: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
+
+
+class JobSearchPreference(Base):
+    """One user's saved JobSpy search parameters, plus their cooldown clock.
+
+    Partitioned by user (``user_id`` is the primary key — one row per account)
+    because these are *personal* search criteria, unlike the operator-owned
+    ``api_keys`` above: with authentication enabled each account keeps its own
+    search term, location and boards.
+
+    ``last_run_at`` lives on this row rather than in a separate table so the
+    cooldown check and the preference read are one query. It is set when a
+    scrape completes, and the router refuses a new run until
+    ``SEARCH_COOLDOWN_SECONDS`` have passed — the boards rate-limit and
+    eventually block by IP, so the throttle is server-side and not advisory.
+    """
+
+    __tablename__ = "job_search_preferences"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    search_term: Mapped[str | None] = mapped_column(String, nullable=True)
+    google_search_term: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Board ids from app.services.job_search.SITES.
+    sites: Mapped[list[str]] = mapped_column(JSON, default=list)
+    distance: Mapped[int] = mapped_column(Integer, default=50)
+    job_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    results_wanted: Mapped[int] = mapped_column(Integer, default=15)
+    hours_old: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    country_indeed: Mapped[str] = mapped_column(String, default="usa")
+    description_format: Mapped[str] = mapped_column(String, default="markdown")
+    easy_apply: Mapped[bool] = mapped_column(Boolean, default=False)
+    linkedin_fetch_description: Mapped[bool] = mapped_column(Boolean, default=False)
+    enforce_annual_salary: Mapped[bool] = mapped_column(Boolean, default=False)
+    offset: Mapped[int] = mapped_column(Integer, default=0)
+    # 'user:pass@host:port' entries rotated across requests by jobspy.
+    proxies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_run_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
