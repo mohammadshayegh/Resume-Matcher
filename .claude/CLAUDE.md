@@ -68,7 +68,7 @@ apps/
 │   │   ├── main.py          # Entry point
 │   │   ├── config.py        # Environment settings
 │   │   ├── database.py      # Async SQLAlchemy/SQLite facade
-│   │   ├── models.py        # SQLAlchemy ORM models (Resume/Job/Improvement/Application/ApiKey)
+│   │   ├── models.py        # SQLAlchemy ORM models (Resume/Job/Improvement/Application/ApiKey/JobSearchPreference)
 │   │   ├── db_engine.py     # Async + sync SQLite engines (WAL/FK pragmas)
 │   │   ├── crypto.py        # Fernet encrypt/decrypt for API keys at rest
 │   │   ├── llm.py           # LiteLLM wrapper
@@ -115,6 +115,7 @@ apps/
 |---------|---------------|
 | **Auth & multi-user** | [authentication.md](../docs/agent/features/authentication.md) — Supabase Google sign-in + per-user data isolation |
 | Application tracker | [application-tracker.md](../docs/agent/features/application-tracker.md) |
+| **Job search (JobSpy)** | [job-search.md](../docs/agent/features/job-search.md) — board scraping, strict option values, 4-hour cooldown |
 | Custom sections | [custom-sections.md](../docs/agent/features/custom-sections.md) |
 | Resume templates | [resume-templates.md](../docs/agent/features/resume-templates.md) |
 | i18n | [i18n.md](../docs/agent/features/i18n.md) |

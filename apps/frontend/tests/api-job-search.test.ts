@@ -144,9 +144,7 @@ describe('job search API client', () => {
       )
     );
 
-    await expect(updateJobSearchPreferences(PREFERENCES)).rejects.toThrow(
-      /Unsupported job site/
-    );
+    await expect(updateJobSearchPreferences(PREFERENCES)).rejects.toThrow(/Unsupported job site/);
   });
 
   it('POSTs /job-search/run and returns results', async () => {

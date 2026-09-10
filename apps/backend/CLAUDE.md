@@ -17,6 +17,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 | Config cache | Shared, TTL-cached (5 min) read of `data/config.json`; `get_content_language()` | `app/config_cache.py` |
 | Database | Async SQLAlchemy/SQLite facade; tables `resumes`/`jobs`/`improvements`/`applications`/`api_keys`; returns plain dicts; global `db` singleton | `app/database.py`, `app/models.py`, `app/db_engine.py` |
 | Tracker | Kanban application-tracker endpoints | `app/routers/applications.py`, `app/schemas/applications.py` |
+| Job search | JobSpy board scraping; strict option values in a leaf module; per-user prefs + cooldown | `app/routers/job_search.py`, `app/services/job_search.py`, `app/job_search_options.py` |
 | LLM | LiteLLM wrapper: Router, retries, JSON extraction, timeouts, provider quirks | `app/llm.py` |
 | PDF | Headless Chromium render of frontend `/print/*` pages; lazy browser init | `app/pdf.py` |
 | Routers | HTTP endpoints (see below) | `app/routers/*.py` |
@@ -31,6 +32,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 - `config.py` — `/config/llm-api-key` (GET/PUT), `/config/llm-test` (POST live health check), `/config/features`, `/config/language`, `/config/prompts`, `/config/feature-prompts`, `/config/api-keys` (per-provider CRUD), `/config/reset` (POST; confirmation token `{"confirm": "RESET_ALL_DATA"}` in the JSON **body**, not a query param).
 - `resumes.py` — the biggest router: `/resumes/upload`, `GET /resumes`, `/resumes/list`, `/resumes/improve` + `/improve/preview` + `/improve/confirm`, `PATCH /resumes/{id}`, `/{id}/pdf`, `/{id}/retry-processing`, cover-letter/outreach/title PATCH + on-demand generate, `/{id}/job-description`, `/{id}/cover-letter/pdf`.
 - `jobs.py` — `/jobs/upload` (batch JD text → job_ids), `GET /jobs/{id}`.
+- `job_search.py` — `/job-search/options`, `/job-search/preferences` (GET/PUT), `/job-search/status`, `/job-search/run` (JobSpy scrape, **one per user per 4h, enforced server-side**), `/job-search/save`. See [`features/job-search.md`](../../docs/agent/features/job-search.md).
 - `enrichment.py` — `/enrichment/analyze/{id}`, `/enhance`, `/apply/{id}`, `/regenerate`, `/apply-regenerated/{id}`.
 
 ### Services
@@ -122,6 +124,7 @@ Config via `.env` (see `.env.example`). Interactive API docs at `/docs`.
 
 - **uv.lock is gitignored** (`.gitignore`), so dependency resolution isn't reproducible from VCS — rely on the exact pins in `pyproject.toml` / `requirements.txt`.
 - **litellm ↔ python-dotenv trap:** litellm `<1.84.0` hard-pinned `python-dotenv==1.0.1`, which used to fight other pins. Resolved at the current pins (`litellm==1.86.2`, `python-dotenv==1.2.2`); do **not** downgrade litellm below 1.84 without re-checking dotenv.
+- **jobspy's stale numpy pin:** `python-jobspy` hard-pins `NUMPY==1.26.3` (pre-3.13, collides with markitdown). `[tool.uv] override-dependencies = ["numpy>=2.1.0"]` in `pyproject.toml` is what makes them coexist — jobspy's only numpy use is `np.round`. Removing that override breaks `uv sync`.
 - **Keys vs non-secret config:** API **keys** live ONLY in the encrypted `api_keys` SQLite table (per-provider, via `_PROVIDER_KEY_MAP`); `load_config_file()` injects the decrypted keys into the returned dict and `save_config_file()` strips them, so secrets never round-trip to `config.json`. Non-secret provider/model/base/features stay in `config.json`. `PUT /config/llm-api-key` no longer writes any key; keys go through `PUT /config/api-keys`. `migrate_legacy_keys()` folds any legacy plaintext keys into the encrypted store (idempotent, non-clobbering). After any write to `config.json`, call `invalidate_config_cache()`.
 - **Master resume invariant:** exactly one resume has `is_master=True`. Concurrent uploads use `create_resume_atomic_master` (an `asyncio.Lock`, not threading) and auto-promote if the current master is stuck `failed`/`processing`.
 - **Dates lose months:** LLMs drop month precision; `restore_dates_from_markdown` + `_restore_original_dates` re-insert them. Preserve this when editing the parse/improve flow.
@@ -146,6 +149,7 @@ Config via `.env` (see `.env.example`). Interactive API docs at `/docs`.
 | AI enrichment | [`features/enrichment.md`](../../docs/agent/features/enrichment.md) |
 | JD matching | [`features/jd-match.md`](../../docs/agent/features/jd-match.md) |
 | Custom sections | [`features/custom-sections.md`](../../docs/agent/features/custom-sections.md) |
+| Job search (JobSpy) | [`features/job-search.md`](../../docs/agent/features/job-search.md) |
 | i18n | [`features/i18n.md`](../../docs/agent/features/i18n.md) |
 | PDF / templates | [`design/pdf-template-guide.md`](../../docs/agent/design/pdf-template-guide.md) · [`design/template-system.md`](../../docs/agent/design/template-system.md) |
 
