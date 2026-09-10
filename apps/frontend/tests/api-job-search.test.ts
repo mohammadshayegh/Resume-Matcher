@@ -168,11 +168,13 @@ describe('job search API client', () => {
   });
 
   it('raises a typed cooldown error carrying the remaining seconds on 429', async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ detail: 'Try again in 3h 12m.' }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/json', 'Retry-After': '11520' },
-      })
+    // A fresh Response per call: a body can only be consumed once.
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ detail: 'Try again in 3h 12m.' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '11520' },
+        })
     );
 
     await expect(runJobSearch()).rejects.toBeInstanceOf(JobSearchCooldownError);
