@@ -13,18 +13,22 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Search, Loader2, AlertTriangle, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
 import {
   fetchJobSearchOptions,
-  fetchJobSearchPreferences,
-  updateJobSearchPreferences,
+  fetchJobSearchFilters,
+  createJobSearchFilter,
+  updateJobSearchFilter,
+  deleteJobSearchFilter,
+  type JobSearchFilter,
   type JobSearchOptions,
   type JobSearchPreferences,
   type JobSearchPreferencesResponse,
 } from '@/lib/api/job-search';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Label } from '@/components/ui/label';
 import { Dropdown } from '@/components/ui/dropdown';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
@@ -95,22 +99,31 @@ export function JobSearchSettings() {
 
   const [options, setOptions] = useState<JobSearchOptions | null>(null);
   const [prefs, setPrefs] = useState<JobSearchPreferences>(DEFAULT_PREFERENCES);
+  const [filters, setFilters] = useState<JobSearchFilter[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [name, setName] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [loadedOptions, loadedPrefs] = await Promise.all([
+        const [loadedOptions, loadedFilters] = await Promise.all([
           fetchJobSearchOptions(),
-          fetchJobSearchPreferences(),
+          fetchJobSearchFilters(),
         ]);
         if (cancelled) return;
         setOptions(loadedOptions);
-        setPrefs(toEditable(loadedPrefs));
+        setFilters(loadedFilters);
+        if (loadedFilters[0]) {
+          setSelectedId(loadedFilters[0].filter_id);
+          setName(loadedFilters[0].name);
+          setPrefs(toEditable(loadedFilters[0]));
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
@@ -146,14 +159,60 @@ export function JobSearchSettings() {
     setSaving(true);
     setError(null);
     try {
-      setPrefs(toEditable(await updateJobSearchPreferences(prefs)));
+      const filterName =
+        name.trim() || prefs.search_term?.trim() || t('jobSearch.filters.untitled');
+      const savedFilter = selectedId
+        ? await updateJobSearchFilter(selectedId, { ...prefs, name: filterName })
+        : await createJobSearchFilter({ ...prefs, name: filterName });
+      setPrefs(toEditable(savedFilter));
+      setName(savedFilter.name);
+      setSelectedId(savedFilter.filter_id);
+      setFilters((current) => {
+        const exists = current.some((item) => item.filter_id === savedFilter.filter_id);
+        return exists
+          ? current.map((item) => (item.filter_id === savedFilter.filter_id ? savedFilter : item))
+          : [...current, savedFilter];
+      });
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [prefs]);
+  }, [name, prefs, selectedId, t]);
+
+  const selectFilter = useCallback((filter: JobSearchFilter) => {
+    setSelectedId(filter.filter_id);
+    setName(filter.name);
+    setPrefs(toEditable(filter));
+    setSaved(false);
+    setError(null);
+  }, []);
+
+  const startNew = useCallback(() => {
+    setSelectedId(null);
+    setName('');
+    setPrefs(DEFAULT_PREFERENCES);
+    setSaved(false);
+    setError(null);
+  }, []);
+
+  const handleDelete = useCallback(async () => {
+    if (!selectedId) return;
+    setConfirmDelete(false);
+    setSaving(true);
+    try {
+      await deleteJobSearchFilter(selectedId);
+      const remainingFilters = filters.filter((item) => item.filter_id !== selectedId);
+      setFilters(remainingFilters);
+      if (remainingFilters[0]) selectFilter(remainingFilters[0]);
+      else startNew();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [filters, selectFilter, selectedId, startNew]);
 
   const usesGoogle = prefs.sites.includes('google');
   const usesLinkedIn = prefs.sites.includes('linkedin');
@@ -199,7 +258,44 @@ export function JobSearchSettings() {
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-ink-soft">{t('jobSearch.settings.description')}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-2xl text-sm text-ink-soft">{t('jobSearch.settings.description')}</p>
+        <Button type="button" variant="outline" size="sm" onClick={startNew}>
+          <Plus className="h-4 w-4" />
+          {t('jobSearch.filters.add')}
+        </Button>
+      </div>
+
+      <div className="border border-black bg-background p-3">
+        <p className="mb-2 font-mono text-xs font-bold uppercase tracking-wider">
+          {t('jobSearch.filters.defined')}
+        </p>
+        {filters.length === 0 ? (
+          <p className="font-mono text-xs text-steel-grey">{t('jobSearch.filters.empty')}</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {filters.map((item) => (
+              <button
+                key={item.filter_id}
+                type="button"
+                onClick={() => selectFilter(item)}
+                className={`border border-black px-3 py-2 text-left font-mono text-xs uppercase tracking-wider ${
+                  selectedId === item.filter_id
+                    ? 'bg-black text-white'
+                    : 'bg-white hover:bg-black/5'
+                }`}
+              >
+                <span className="block font-bold">{item.name}</span>
+                <span
+                  className={selectedId === item.filter_id ? 'text-white/70' : 'text-steel-grey'}
+                >
+                  {item.location || item.country_indeed}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {error && (
         <div
@@ -209,6 +305,22 @@ export function JobSearchSettings() {
           {error}
         </div>
       )}
+
+      <div className="space-y-1 sm:max-w-md">
+        <Label htmlFor="jobSearchFilterName">{t('jobSearch.filters.nameLabel')}</Label>
+        <input
+          id="jobSearchFilterName"
+          type="text"
+          className={INPUT_CLASS}
+          value={name}
+          maxLength={80}
+          onChange={(event) => {
+            setName(event.target.value);
+            setSaved(false);
+          }}
+          placeholder={t('jobSearch.filters.namePlaceholder')}
+        />
+      </div>
 
       {/* Boards */}
       <div className="space-y-2">
@@ -455,7 +567,7 @@ export function JobSearchSettings() {
       <div className="flex flex-wrap items-center gap-3 border-t border-black/10 pt-4">
         <Button onClick={handleSave} disabled={saving}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {t('jobSearch.settings.save')}
+          {selectedId ? t('jobSearch.filters.saveChanges') : t('jobSearch.filters.create')}
         </Button>
         <Link href="/job-search">
           <Button variant="outline">
@@ -463,6 +575,17 @@ export function JobSearchSettings() {
             {t('jobSearch.openPage')}
           </Button>
         </Link>
+        {selectedId && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setConfirmDelete(true)}
+            disabled={saving}
+          >
+            <Trash2 className="h-4 w-4" />
+            {t('jobSearch.filters.delete')}
+          </Button>
+        )}
         {saved && (
           <span className="flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-green-700">
             <CheckCircle2 className="h-3 w-3" />
@@ -470,6 +593,16 @@ export function JobSearchSettings() {
           </span>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={t('jobSearch.filters.deleteTitle')}
+        description={t('jobSearch.filters.deleteConfirm')}
+        confirmLabel={t('jobSearch.filters.delete')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={handleDelete}
+        variant="danger"
+      />
     </div>
   );
 }

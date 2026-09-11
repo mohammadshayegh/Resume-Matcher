@@ -57,6 +57,15 @@ export interface JobSearchPreferencesResponse extends JobSearchPreferences {
   can_search: boolean;
 }
 
+export interface JobSearchFilter extends JobSearchPreferencesResponse {
+  filter_id: string;
+  name: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type JobSearchFilterInput = JobSearchPreferences & { name: string };
+
 export interface JobSearchStatus {
   last_run_at: string | null;
   cooldown_seconds: number;
@@ -191,6 +200,89 @@ export async function updateJobSearchPreferences(
   if (!res.ok) {
     throw new Error(await errorMessage(res, `Failed to save search settings (${res.status}).`));
   }
+  return res.json();
+}
+
+export async function fetchJobSearchFilters(): Promise<JobSearchFilter[]> {
+  const res = await apiFetch('/job-search/filters', { credentials: 'include' });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to load search filters (${res.status}).`));
+  const data = (await res.json()) as { filters: JobSearchFilter[] };
+  return data.filters;
+}
+
+export async function createJobSearchFilter(input: JobSearchFilterInput): Promise<JobSearchFilter> {
+  const res = await apiFetch('/job-search/filters', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to create search filter (${res.status}).`));
+  return res.json();
+}
+
+export async function updateJobSearchFilter(
+  filterId: string,
+  input: JobSearchFilterInput
+): Promise<JobSearchFilter> {
+  const res = await apiFetch(`/job-search/filters/${encodeURIComponent(filterId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(input),
+  });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to update search filter (${res.status}).`));
+  return res.json();
+}
+
+export async function deleteJobSearchFilter(filterId: string): Promise<void> {
+  const res = await apiFetch(`/job-search/filters/${encodeURIComponent(filterId)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to delete search filter (${res.status}).`));
+}
+
+export async function fetchJobSearchFilterResults(
+  filterId: string
+): Promise<JobSearchListingsResponse> {
+  const res = await apiFetch(`/job-search/filters/${encodeURIComponent(filterId)}/results`, {
+    credentials: 'include',
+  });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to load filter results (${res.status}).`));
+  return res.json();
+}
+
+export async function clearJobSearchFilterResults(
+  filterId: string
+): Promise<JobSearchListingsResponse> {
+  const res = await apiFetch(`/job-search/filters/${encodeURIComponent(filterId)}/results`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok)
+    throw new Error(await errorMessage(res, `Failed to clear filter results (${res.status}).`));
+  return res.json();
+}
+
+export async function runJobSearchFilter(filterId: string): Promise<JobSearchRunResponse> {
+  const res = await apiFetch(`/job-search/filters/${encodeURIComponent(filterId)}/run`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    throw new JobSearchCooldownError(
+      await errorMessage(res, 'This filter can be searched once every 4 hours.'),
+      Number.isFinite(retryAfter) ? retryAfter : 0
+    );
+  }
+  if (!res.ok) throw new Error(await errorMessage(res, `Job search failed (${res.status}).`));
   return res.json();
 }
 

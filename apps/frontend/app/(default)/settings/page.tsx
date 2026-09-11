@@ -28,7 +28,6 @@ import {
 import { API_URL } from '@/lib/api/client';
 import { getVersionString } from '@/lib/config/version';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
-import { JobSearchSettings } from '@/components/settings/job-search-settings';
 import { useStatusCache } from '@/lib/context/status-cache';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -51,7 +50,6 @@ import {
   Sparkles,
   Clock,
   Settings2,
-  Search,
   Trash2,
   AlertTriangle,
 } from 'lucide-react';
@@ -1239,17 +1237,6 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
-          </section>
-
-          {/* Job Search Section */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-2 border-b border-black/10 pb-2">
-              <Search className="w-4 h-4" />
-              <h2 className="font-mono text-sm font-bold uppercase tracking-wider">
-                {t('jobSearch.settings.title')}
-              </h2>
-            </div>
-            <JobSearchSettings />
           </section>
 
           {/* Danger Zone */}

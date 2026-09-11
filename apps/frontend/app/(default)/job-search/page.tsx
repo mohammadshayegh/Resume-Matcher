@@ -32,14 +32,16 @@ import {
 } from 'lucide-react';
 
 import {
-  fetchJobSearchResults,
-  clearJobSearchResults,
-  runJobSearch,
+  fetchJobSearchFilters,
+  fetchJobSearchFilterResults,
+  clearJobSearchFilterResults,
+  runJobSearchFilter,
   saveJobSearchResult,
   formatCooldown,
   formatSalary,
   JobSearchCooldownError,
   type JobSearchListing,
+  type JobSearchFilter,
 } from '@/lib/api/job-search';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -51,6 +53,8 @@ export default function JobSearchPage() {
   const { t } = useTranslations();
 
   const [listings, setListings] = useState<JobSearchListing[]>([]);
+  const [filters, setFilters] = useState<JobSearchFilter[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState(14);
   const [configured, setConfigured] = useState(true);
   const [remaining, setRemaining] = useState(0);
@@ -62,8 +66,8 @@ export default function JobSearchPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const load = useCallback(async () => {
-    const response = await fetchJobSearchResults();
+  const load = useCallback(async (filterId: string) => {
+    const response = await fetchJobSearchFilterResults(filterId);
     setListings(response.listings);
     setRetentionDays(response.retention_days);
     setRemaining(response.seconds_until_next_run);
@@ -74,12 +78,10 @@ export default function JobSearchPage() {
     let cancelled = false;
     (async () => {
       try {
-        const response = await fetchJobSearchResults();
+        const loadedFilters = await fetchJobSearchFilters();
         if (cancelled) return;
-        setListings(response.listings);
-        setRetentionDays(response.retention_days);
-        setRemaining(response.seconds_until_next_run);
-        setConfigured(response.configured);
+        setFilters(loadedFilters);
+        setActiveId(loadedFilters[0]?.filter_id ?? null);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -90,6 +92,36 @@ export default function JobSearchPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeId) {
+      setLoading(false);
+      setListings([]);
+      setConfigured(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const response = await fetchJobSearchFilterResults(activeId);
+        if (cancelled) return;
+        setListings(response.listings);
+        setRetentionDays(response.retention_days);
+        setRemaining(response.seconds_until_next_run);
+        setConfigured(response.configured);
+        setFilter('all');
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId]);
 
   // Tick the countdown locally rather than polling the backend every second.
   // Keyed on whether a countdown is running, not on `remaining` itself, so the
@@ -104,11 +136,12 @@ export default function JobSearchPage() {
   }, [isCountingDown]);
 
   const handleSearch = useCallback(async () => {
+    if (!activeId) return;
     setSearching(true);
     setError(null);
     setNotice(null);
     try {
-      const response = await runJobSearch();
+      const response = await runJobSearchFilter(activeId);
       setListings(response.listings);
       setRetentionDays(response.retention_days);
       setRemaining(response.seconds_until_next_run);
@@ -129,7 +162,7 @@ export default function JobSearchPage() {
     } finally {
       setSearching(false);
     }
-  }, [t]);
+  }, [activeId, t]);
 
   const handleSave = useCallback(
     async (listing: JobSearchListing, addToTracker: boolean) => {
@@ -139,22 +172,23 @@ export default function JobSearchPage() {
         await saveJobSearchResult(listing.listing_id, { addToTracker });
         // Re-read rather than patching locally: the server records what the
         // save produced, and that is what must survive the next reload.
-        await load();
+        if (activeId) await load(activeId);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setSavingId(null);
       }
     },
-    [load]
+    [activeId, load]
   );
 
   const handleClear = useCallback(async () => {
+    if (!activeId) return;
     setConfirmClear(false);
     setError(null);
     setNotice(null);
     try {
-      const response = await clearJobSearchResults();
+      const response = await clearJobSearchFilterResults(activeId);
       setListings(response.listings);
       setRemaining(response.seconds_until_next_run);
       setConfigured(response.configured);
@@ -162,7 +196,7 @@ export default function JobSearchPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [activeId]);
 
   const newCount = useMemo(() => listings.filter((listing) => listing.is_new).length, [listings]);
   const visible = useMemo(
@@ -170,7 +204,7 @@ export default function JobSearchPage() {
     [filter, listings]
   );
 
-  const canSearch = remaining <= 0 && !searching;
+  const canSearch = Boolean(activeId) && remaining <= 0 && !searching;
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-start overflow-y-auto p-6 md:p-12">
@@ -195,37 +229,95 @@ export default function JobSearchPage() {
         </div>
 
         <div className="space-y-6 p-8">
-          {/* Search control */}
-          <div className="flex flex-wrap items-center gap-4 border border-black bg-white p-4">
-            <Button onClick={handleSearch} disabled={!canSearch}>
-              {searching ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Search className="h-4 w-4" />
-              )}
-              {t('jobSearch.searchButton')}
-            </Button>
-
-            {remaining > 0 ? (
-              <span className="flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-orange-600">
-                <Clock className="h-3 w-3" />
-                {t('jobSearch.availableIn')} {formatCooldown(remaining)}
-              </span>
-            ) : (
-              <span className="font-mono text-xs uppercase tracking-wider text-steel-grey">
-                {t('jobSearch.cooldownNote')}
-              </span>
-            )}
-
-            <Link href="/settings" className="ml-auto">
+          <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-black">
+            <div
+              className="flex max-w-full gap-1 overflow-x-auto"
+              role="tablist"
+              aria-label={t('jobSearch.filters.tabsLabel')}
+            >
+              {filters.map((item) => (
+                <button
+                  key={item.filter_id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeId === item.filter_id}
+                  onClick={() => setActiveId(item.filter_id)}
+                  className={`shrink-0 border border-b-0 border-black px-4 py-3 text-left ${
+                    activeId === item.filter_id
+                      ? 'bg-black text-white'
+                      : 'bg-white hover:bg-black/5'
+                  }`}
+                >
+                  <span className="block font-mono text-xs font-bold uppercase tracking-wider">
+                    {item.name}
+                  </span>
+                  <span
+                    className={`block text-xs ${activeId === item.filter_id ? 'text-white/70' : 'text-steel-grey'}`}
+                  >
+                    {item.search_term || item.google_search_term} ·{' '}
+                    {item.location || item.country_indeed}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <Link href="/job-search/filters" className="pb-2">
               <Button variant="outline" size="sm">
                 <Settings2 className="h-4 w-4" />
-                {t('jobSearch.editSettings')}
+                {t('jobSearch.filters.manage')}
               </Button>
             </Link>
           </div>
 
-          {!loading && !configured && (
+          {!loading && filters.length === 0 && (
+            <div className="border-2 border-dashed border-black bg-white p-8 text-center">
+              <p className="font-serif text-xl font-bold">
+                {t('jobSearch.filters.emptySearchTitle')}
+              </p>
+              <p className="mt-2 text-sm text-ink-soft">
+                {t('jobSearch.filters.emptySearchDescription')}
+              </p>
+              <Link href="/job-search/filters" className="mt-4 inline-block">
+                <Button>
+                  <Settings2 className="h-4 w-4" />
+                  {t('jobSearch.filters.createFirst')}
+                </Button>
+              </Link>
+            </div>
+          )}
+
+          {/* Search control */}
+          {activeId && (
+            <div className="flex flex-wrap items-center gap-4 border border-black bg-white p-4">
+              <Button onClick={handleSearch} disabled={!canSearch}>
+                {searching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+                {t('jobSearch.searchButton')}
+              </Button>
+
+              {remaining > 0 ? (
+                <span className="flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-orange-600">
+                  <Clock className="h-3 w-3" />
+                  {t('jobSearch.availableIn')} {formatCooldown(remaining)}
+                </span>
+              ) : (
+                <span className="font-mono text-xs uppercase tracking-wider text-steel-grey">
+                  {t('jobSearch.cooldownNote')}
+                </span>
+              )}
+
+              <Link href="/job-search/filters" className="ml-auto">
+                <Button variant="outline" size="sm">
+                  <Settings2 className="h-4 w-4" />
+                  {t('jobSearch.editSettings')}
+                </Button>
+              </Link>
+            </div>
+          )}
+
+          {!loading && activeId && !configured && (
             <div className="border-2 border-amber-500 bg-amber-50 p-4">
               <p className="flex items-start gap-2 font-mono text-xs text-amber-800">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

@@ -240,6 +240,38 @@ class JobSearchPreference(Base):
     updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
 
 
+class JobSearchFilter(Base):
+    """One named, independently runnable job-search configuration."""
+
+    __tablename__ = "job_search_filters"
+    __table_args__ = (
+        Index("ix_job_search_filters_user_updated", "user_id", "updated_at"),
+    )
+
+    filter_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String)
+    search_term: Mapped[str | None] = mapped_column(String, nullable=True)
+    google_search_term: Mapped[str | None] = mapped_column(String, nullable=True)
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
+    sites: Mapped[list[str]] = mapped_column(JSON, default=list)
+    distance: Mapped[int] = mapped_column(Integer, default=50)
+    job_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    results_wanted: Mapped[int] = mapped_column(Integer, default=15)
+    hours_old: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    country_indeed: Mapped[str] = mapped_column(String, default="usa")
+    description_format: Mapped[str] = mapped_column(String, default="markdown")
+    easy_apply: Mapped[bool] = mapped_column(Boolean, default=False)
+    linkedin_fetch_description: Mapped[bool] = mapped_column(Boolean, default=False)
+    enforce_annual_salary: Mapped[bool] = mapped_column(Boolean, default=False)
+    offset: Mapped[int] = mapped_column(Integer, default=0)
+    proxies: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_run_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=_utcnow_iso)
+
+
 class JobSearchListing(Base):
     """A job posting found by a search, cached per user.
 
@@ -312,3 +344,21 @@ class JobSearchListing(Base):
     # "In Tracker" after a reload.
     saved_job_id: Mapped[str | None] = mapped_column(String, nullable=True)
     application_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class JobSearchFilterResult(Base):
+    """Per-filter history for a canonical cached job-search listing."""
+
+    __tablename__ = "job_search_filter_results"
+    __table_args__ = (
+        Index("ix_filter_results_expiry", "expires_at"),
+        Index("ix_filter_results_filter_new", "filter_id", "is_new"),
+    )
+
+    filter_id: Mapped[str] = mapped_column(String, primary_key=True)
+    listing_id: Mapped[str] = mapped_column(String, primary_key=True)
+    first_seen_at: Mapped[str] = mapped_column(String)
+    last_seen_at: Mapped[str] = mapped_column(String)
+    times_seen: Mapped[int] = mapped_column(Integer, default=1)
+    is_new: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[str] = mapped_column(String)

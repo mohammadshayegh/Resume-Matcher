@@ -133,6 +133,26 @@ class JobSearchPreferencesResponse(JobSearchPreferencesBase):
     can_search: bool
 
 
+class JobSearchFilterRequest(JobSearchPreferencesBase):
+    """Create or replace one named search filter."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+
+class JobSearchFilterResponse(JobSearchFilterRequest):
+    """A named filter plus its independent cooldown state."""
+
+    filter_id: str
+    last_run_at: str | None = None
+    cooldown_seconds: int
+    seconds_until_next_run: int
+    can_search: bool
+
+
+class JobSearchFiltersResponse(BaseModel):
+    filters: list[JobSearchFilterResponse]
+
+
 class JobSearchStatusResponse(BaseModel):
     """Just the cooldown clock — polled to drive the button's countdown."""
 

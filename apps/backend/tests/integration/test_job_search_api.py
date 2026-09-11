@@ -168,6 +168,76 @@ class TestPreferences:
         assert resp.json()["can_search"] is False
 
 
+class TestNamedFilters:
+    """Named filters keep configuration, cooldowns, and results separate."""
+
+    async def test_multiple_filters_round_trip_in_tab_order(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            first = await client.post(
+                f"{BASE}/filters",
+                json={**_valid_prefs(), "name": "Engineering · Germany"},
+            )
+            second = await client.post(
+                f"{BASE}/filters",
+                json={
+                    **_valid_prefs(
+                        search_term="product manager",
+                        location="Amsterdam",
+                        country_indeed="netherlands",
+                    ),
+                    "name": "Product · Netherlands",
+                },
+            )
+            listed = await client.get(f"{BASE}/filters")
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert [item["name"] for item in listed.json()["filters"]] == [
+            "Engineering · Germany",
+            "Product · Netherlands",
+        ]
+
+    async def test_results_and_cooldowns_are_independent_per_filter(
+        self, client: AsyncClient, isolated_db: Any
+    ) -> None:
+        async with client:
+            first = (
+                await client.post(
+                    f"{BASE}/filters",
+                    json={**_valid_prefs(), "name": "Engineering"},
+                )
+            ).json()
+            second = (
+                await client.post(
+                    f"{BASE}/filters",
+                    json={
+                        **_valid_prefs(search_term="product manager"),
+                        "name": "Product",
+                    },
+                )
+            ).json()
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                first_run = await client.post(f"{BASE}/filters/{first['filter_id']}/run")
+            second_results = await client.get(
+                f"{BASE}/filters/{second['filter_id']}/results"
+            )
+            with patch("app.routers.job_search.run_search", return_value=[_scraped()]):
+                second_run = await client.post(
+                    f"{BASE}/filters/{second['filter_id']}/run"
+                )
+            first_results = await client.get(
+                f"{BASE}/filters/{first['filter_id']}/results"
+            )
+        assert first_run.status_code == 200
+        assert first_run.json()["count"] == 1
+        assert second_results.json()["count"] == 0
+        assert second_results.json()["can_search"] is True
+        assert second_run.json()["count"] == 1
+        assert second_run.json()["new_count"] == 1
+        assert first_results.json()["count"] == 1
+
+
 class TestStatus:
     """GET /job-search/status — drives the button's countdown."""
 

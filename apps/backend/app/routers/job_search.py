@@ -25,6 +25,9 @@ from app.database import DatabaseBusyError, db
 from app.schemas.job_search import (
     JobSearchListing,
     JobSearchListingsResponse,
+    JobSearchFilterRequest,
+    JobSearchFilterResponse,
+    JobSearchFiltersResponse,
     JobSearchOption,
     JobSearchOptionsResponse,
     JobSearchPreferencesRequest,
@@ -180,6 +183,16 @@ def _preferences_response(prefs: dict[str, Any]) -> JobSearchPreferencesResponse
     )
 
 
+def _filter_response(item: dict[str, Any]) -> JobSearchFilterResponse:
+    remaining = _seconds_until_next_run(item.get("last_run_at"))
+    return JobSearchFilterResponse(
+        **item,
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        seconds_until_next_run=remaining,
+        can_search=remaining == 0,
+    )
+
+
 def _build_scrape_params(prefs: dict[str, Any]) -> dict[str, Any]:
     """Map stored preferences onto ``scrape_jobs`` keyword arguments.
 
@@ -306,6 +319,154 @@ async def update_job_search_preferences(
             detail="Failed to save job search settings. Please try again.",
         ) from exc
     return _preferences_response(prefs)
+
+
+@router.get("/filters", response_model=JobSearchFiltersResponse)
+async def list_job_search_filters(
+    user: AuthUser = Depends(get_current_user),
+) -> JobSearchFiltersResponse:
+    """List the caller's named search filters in tab order."""
+    rows = await db.list_job_search_filters(user_id=user.id)
+    # Preserve the single-filter setup created by older versions of the app.
+    if not rows:
+        legacy = await db.get_job_search_preferences(user_id=user.id)
+        if legacy is not None:
+            name = legacy.get("search_term") or legacy.get("location") or "My job search"
+            rows = [
+                await db.save_job_search_filter(
+                    {**legacy, "name": name}, user_id=user.id
+                )
+            ]
+    return JobSearchFiltersResponse(filters=[_filter_response(row) for row in rows])
+
+
+@router.post("/filters", response_model=JobSearchFilterResponse, status_code=201)
+async def create_job_search_filter(
+    request: JobSearchFilterRequest,
+    user: AuthUser = Depends(get_current_writer),
+) -> JobSearchFilterResponse:
+    row = await db.save_job_search_filter(request.model_dump(), user_id=user.id)
+    return _filter_response(row)
+
+
+@router.put("/filters/{filter_id}", response_model=JobSearchFilterResponse)
+async def update_job_search_filter(
+    filter_id: str,
+    request: JobSearchFilterRequest,
+    user: AuthUser = Depends(get_current_writer),
+) -> JobSearchFilterResponse:
+    current = await db.get_job_search_filter(filter_id, user_id=user.id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Search filter not found.")
+    row = await db.save_job_search_filter(
+        request.model_dump(), filter_id=filter_id, user_id=user.id
+    )
+    return _filter_response(row)
+
+
+@router.delete("/filters/{filter_id}", status_code=204)
+async def delete_job_search_filter(
+    filter_id: str,
+    user: AuthUser = Depends(get_current_writer),
+) -> None:
+    deleted = await db.delete_job_search_filter(filter_id, user_id=user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Search filter not found.")
+
+
+@router.get("/filters/{filter_id}/results", response_model=JobSearchListingsResponse)
+async def get_job_search_filter_results(
+    filter_id: str,
+    user: AuthUser = Depends(get_current_user),
+) -> JobSearchListingsResponse:
+    await _purge_expired()
+    saved_filter = await db.get_job_search_filter(filter_id, user_id=user.id)
+    if saved_filter is None:
+        raise HTTPException(status_code=404, detail="Search filter not found.")
+    listings = await db.list_job_search_filter_listings(filter_id, user_id=user.id)
+    remaining = _seconds_until_next_run(saved_filter.get("last_run_at"))
+    return JobSearchListingsResponse(
+        listings=[JobSearchListing(**listing) for listing in listings],
+        count=len(listings),
+        new_count=sum(1 for listing in listings if listing["is_new"]),
+        retention_days=RETENTION_DAYS,
+        last_run_at=saved_filter.get("last_run_at"),
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        seconds_until_next_run=remaining,
+        can_search=remaining == 0,
+        configured=_is_configured(saved_filter, True),
+    )
+
+
+@router.delete("/filters/{filter_id}/results", response_model=JobSearchListingsResponse)
+async def clear_job_search_filter_results(
+    filter_id: str,
+    user: AuthUser = Depends(get_current_writer),
+) -> JobSearchListingsResponse:
+    saved_filter = await db.get_job_search_filter(filter_id, user_id=user.id)
+    if saved_filter is None:
+        raise HTTPException(status_code=404, detail="Search filter not found.")
+    await db.clear_job_search_filter_listings(filter_id, user_id=user.id)
+    remaining = _seconds_until_next_run(saved_filter.get("last_run_at"))
+    return JobSearchListingsResponse(
+        listings=[], count=0, new_count=0, retention_days=RETENTION_DAYS,
+        last_run_at=saved_filter.get("last_run_at"),
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+        seconds_until_next_run=remaining, can_search=remaining == 0, configured=True,
+    )
+
+
+@router.post("/filters/{filter_id}/run", response_model=JobSearchRunResponse)
+async def run_job_search_filter(
+    filter_id: str,
+    user: AuthUser = Depends(get_current_writer),
+) -> JobSearchRunResponse:
+    saved_filter = await db.get_job_search_filter(filter_id, user_id=user.id)
+    if saved_filter is None:
+        raise HTTPException(status_code=404, detail="Search filter not found.")
+    remaining = _seconds_until_next_run(saved_filter.get("last_run_at"))
+    if remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="This filter can be searched once every 4 hours.",
+            headers={"Retry-After": str(remaining)},
+        )
+    _require_searchable(saved_filter)
+    await _purge_expired()
+    try:
+        results = await run_in_threadpool(run_search, _build_scrape_params(saved_filter))
+    except JobSearchError as exc:
+        logger.error("Named job search failed for user: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="The job search could not be completed. Please try again later.",
+        ) from exc
+    searched_at = utcnow_iso()
+    try:
+        merged = await db.record_job_search_filter_results(
+            filter_id,
+            results,
+            searched_at=searched_at,
+            expires_at=_expiry_from(searched_at),
+            user_id=user.id,
+        )
+    except DatabaseBusyError:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to store named job search results")
+        raise HTTPException(
+            status_code=500,
+            detail="The search ran but its results could not be saved. Please try again.",
+        ) from exc
+    await db.mark_job_search_filter_run(filter_id, searched_at, user_id=user.id)
+    listings = merged["listings"]
+    return JobSearchRunResponse(
+        listings=[JobSearchListing(**listing) for listing in listings],
+        count=len(listings), new_count=merged["new_count"],
+        duplicate_count=merged["duplicate_count"], retention_days=RETENTION_DAYS,
+        searched_at=searched_at, seconds_until_next_run=SEARCH_COOLDOWN_SECONDS,
+        cooldown_seconds=SEARCH_COOLDOWN_SECONDS,
+    )
 
 
 @router.get("/status", response_model=JobSearchStatusResponse)

@@ -48,6 +48,8 @@ from app.models import (
     Application,
     Improvement,
     Job,
+    JobSearchFilter,
+    JobSearchFilterResult,
     JobSearchListing,
     JobSearchPreference,
     Resume,
@@ -1562,6 +1564,120 @@ class Database:
             row.updated_at = _now()
             await session.commit()
 
+    # --- Named job-search filters ------------------------------------------
+
+    @staticmethod
+    def _job_search_filter_to_dict(row: JobSearchFilter) -> dict[str, Any]:
+        return {
+            "filter_id": row.filter_id,
+            "name": row.name,
+            **{
+                field: list(getattr(row, field) or [])
+                if field in {"sites", "proxies"}
+                else getattr(row, field)
+                for field in Database._JOB_SEARCH_FIELDS
+            },
+            "last_run_at": row.last_run_at,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+
+    async def list_job_search_filters(
+        self, *, user_id: str = LOCAL_USER_ID
+    ) -> list[dict[str, Any]]:
+        async with self._session() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(JobSearchFilter)
+                        .where(JobSearchFilter.user_id == user_id)
+                        .order_by(JobSearchFilter.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [self._job_search_filter_to_dict(row) for row in rows]
+
+    async def get_job_search_filter(
+        self, filter_id: str, *, user_id: str = LOCAL_USER_ID
+    ) -> dict[str, Any] | None:
+        async with self._session() as session:
+            row = await session.scalar(
+                select(JobSearchFilter).where(
+                    JobSearchFilter.filter_id == filter_id,
+                    JobSearchFilter.user_id == user_id,
+                )
+            )
+            return self._job_search_filter_to_dict(row) if row else None
+
+    async def save_job_search_filter(
+        self,
+        values: dict[str, Any],
+        *,
+        filter_id: str | None = None,
+        user_id: str = LOCAL_USER_ID,
+    ) -> dict[str, Any]:
+        async with self._write_session() as session:
+            row = None
+            if filter_id:
+                row = await session.scalar(
+                    select(JobSearchFilter).where(
+                        JobSearchFilter.filter_id == filter_id,
+                        JobSearchFilter.user_id == user_id,
+                    )
+                )
+            if row is None:
+                row = JobSearchFilter(
+                    filter_id=filter_id or str(uuid4()),
+                    user_id=user_id,
+                    created_at=_now(),
+                )
+                session.add(row)
+            row.name = values["name"]
+            for field in self._JOB_SEARCH_FIELDS:
+                if field in values:
+                    setattr(row, field, values[field])
+            row.updated_at = _now()
+            await session.commit()
+            return self._job_search_filter_to_dict(row)
+
+    async def delete_job_search_filter(
+        self, filter_id: str, *, user_id: str = LOCAL_USER_ID
+    ) -> bool:
+        async with self._write_session() as session:
+            row = await session.scalar(
+                select(JobSearchFilter).where(
+                    JobSearchFilter.filter_id == filter_id,
+                    JobSearchFilter.user_id == user_id,
+                )
+            )
+            if row is None:
+                return False
+            await session.execute(
+                delete(JobSearchFilterResult).where(
+                    JobSearchFilterResult.filter_id == filter_id
+                )
+            )
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def mark_job_search_filter_run(
+        self, filter_id: str, ran_at: str, *, user_id: str = LOCAL_USER_ID
+    ) -> None:
+        async with self._write_session() as session:
+            row = await session.scalar(
+                select(JobSearchFilter).where(
+                    JobSearchFilter.filter_id == filter_id,
+                    JobSearchFilter.user_id == user_id,
+                )
+            )
+            if row is not None:
+                row.last_run_at = ran_at
+                row.updated_at = _now()
+                await session.commit()
+
 
     # --- Job search listings (the per-user result cache) ---------------------
 
@@ -1601,6 +1717,11 @@ class Database:
         lexically, so this is a plain indexed range delete.
         """
         async with self._write_session() as session:
+            await session.execute(
+                delete(JobSearchFilterResult).where(
+                    JobSearchFilterResult.expires_at <= now
+                )
+            )
             result = await session.execute(
                 delete(JobSearchListing).where(JobSearchListing.expires_at <= now)
             )
@@ -1780,6 +1901,160 @@ class Database:
         async with self._write_session() as session:
             result = await session.execute(
                 delete(JobSearchListing).where(JobSearchListing.user_id == user_id)
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
+
+    async def list_job_search_filter_listings(
+        self, filter_id: str, *, user_id: str = LOCAL_USER_ID
+    ) -> list[dict[str, Any]]:
+        async with self._session() as session:
+            rows = (
+                await session.execute(
+                    select(JobSearchListing, JobSearchFilterResult)
+                    .join(
+                        JobSearchFilterResult,
+                        JobSearchFilterResult.listing_id == JobSearchListing.listing_id,
+                    )
+                    .where(
+                        JobSearchListing.user_id == user_id,
+                        JobSearchFilterResult.filter_id == filter_id,
+                    )
+                    .order_by(
+                        JobSearchFilterResult.is_new.desc(),
+                        JobSearchFilterResult.first_seen_at.desc(),
+                    )
+                )
+            ).all()
+            listings: list[dict[str, Any]] = []
+            for listing, history in rows:
+                item = self._job_search_listing_to_dict(listing)
+                item.update(
+                    first_seen_at=history.first_seen_at,
+                    last_seen_at=history.last_seen_at,
+                    times_seen=history.times_seen,
+                    is_new=history.is_new,
+                    expires_at=history.expires_at,
+                )
+                listings.append(item)
+            return listings
+
+    async def record_job_search_filter_results(
+        self,
+        filter_id: str,
+        results: list[dict[str, Any]],
+        *,
+        searched_at: str,
+        expires_at: str,
+        user_id: str = LOCAL_USER_ID,
+    ) -> dict[str, Any]:
+        from app.services.job_search import dedupe_key_for, fingerprint_url
+
+        async with self._write_session() as session:
+            await session.execute(
+                update(JobSearchFilterResult)
+                .where(
+                    JobSearchFilterResult.filter_id == filter_id,
+                    JobSearchFilterResult.is_new.is_(True),
+                )
+                .values(is_new=False)
+            )
+            existing = (
+                (
+                    await session.execute(
+                        select(JobSearchListing).where(JobSearchListing.user_id == user_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            by_fingerprint = {row.fingerprint: row for row in existing}
+            by_dedupe_key = {row.dedupe_key: row for row in existing if row.dedupe_key}
+            histories = {
+                row.listing_id: row
+                for row in (
+                    (
+                        await session.execute(
+                            select(JobSearchFilterResult).where(
+                                JobSearchFilterResult.filter_id == filter_id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            }
+            new_count = 0
+            for result in results:
+                fingerprint = fingerprint_url(result["job_url"])
+                dedupe_key = dedupe_key_for(result)
+                listing = by_fingerprint.get(fingerprint)
+                if listing is None and dedupe_key is not None:
+                    listing = by_dedupe_key.get(dedupe_key)
+                if listing is None:
+                    listing = JobSearchListing(
+                        listing_id=str(uuid4()), user_id=user_id,
+                        fingerprint=fingerprint, dedupe_key=dedupe_key,
+                        site=result.get("site"), title=result.get("title") or "Untitled role",
+                        company=result.get("company"), company_url=result.get("company_url"),
+                        location=result.get("location"), job_url=result["job_url"],
+                        job_url_direct=result.get("job_url_direct"), job_type=result.get("job_type"),
+                        date_posted=result.get("date_posted"), is_remote=bool(result.get("is_remote")),
+                        min_amount=result.get("min_amount"), max_amount=result.get("max_amount"),
+                        currency=result.get("currency"), interval=result.get("interval"),
+                        description=result.get("description"), first_seen_at=searched_at,
+                        last_seen_at=searched_at, times_seen=1, is_new=True, expires_at=expires_at,
+                    )
+                    session.add(listing)
+                    by_fingerprint[fingerprint] = listing
+                    if dedupe_key is not None:
+                        by_dedupe_key[dedupe_key] = listing
+                else:
+                    # The canonical row may be shared by several filters. Keep
+                    # it alive through the newest filter-specific retention
+                    # window; the association below owns what each tab shows.
+                    listing.last_seen_at = searched_at
+                    if listing.expires_at < expires_at:
+                        listing.expires_at = expires_at
+                history = histories.get(listing.listing_id)
+                if history is None:
+                    history = JobSearchFilterResult(
+                        filter_id=filter_id, listing_id=listing.listing_id,
+                        first_seen_at=searched_at, last_seen_at=searched_at,
+                        times_seen=1, is_new=True, expires_at=expires_at,
+                    )
+                    session.add(history)
+                    histories[listing.listing_id] = history
+                    new_count += 1
+                else:
+                    history.last_seen_at = searched_at
+                    history.times_seen = (history.times_seen or 1) + 1
+            await session.commit()
+
+        listings = await self.list_job_search_filter_listings(filter_id, user_id=user_id)
+        return {
+            "new_count": new_count,
+            "duplicate_count": len(results) - new_count,
+            "listings": listings,
+        }
+
+    async def clear_job_search_filter_listings(
+        self, filter_id: str, *, user_id: str = LOCAL_USER_ID
+    ) -> int:
+        # Ownership is verified by the filter row before deleting its history.
+        async with self._write_session() as session:
+            owned = await session.scalar(
+                select(JobSearchFilter.filter_id).where(
+                    JobSearchFilter.filter_id == filter_id,
+                    JobSearchFilter.user_id == user_id,
+                )
+            )
+            if owned is None:
+                return 0
+            result = await session.execute(
+                delete(JobSearchFilterResult).where(
+                    JobSearchFilterResult.filter_id == filter_id
+                )
             )
             await session.commit()
             return int(result.rowcount or 0)
