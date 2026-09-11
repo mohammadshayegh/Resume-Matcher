@@ -445,7 +445,9 @@ async def test_parse_deadline_marks_only_owned_processing_attempt_failed(
         await asyncio.sleep(10)
         return {}
 
-    monkeypatch.setattr(settings, "request_timeout_seconds", 0.2)
+    # Leave enough time for a cold SQLite connection to create and claim the
+    # record, then let the deliberately stalled parser exhaust the budget.
+    monkeypatch.setattr(settings, "request_timeout_seconds", 0.5)
     monkeypatch.setattr(resumes, "parse_resume_to_json", parse)
     monkeypatch.setattr(
         resumes, "parse_document", AsyncMock(return_value="Synthetic resume")
@@ -496,10 +498,12 @@ async def test_deadline_during_claim_retires_committed_owner_before_returning(
 
     async def slow_claim(*args: Any, **kwargs: Any) -> str | None:
         token = await claim(*args, **kwargs)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(1)
         return token
 
-    monkeypatch.setattr(settings, "request_timeout_seconds", 0.04)
+    # Exercise cancellation after the claim is committed, not during test
+    # setup on a busy CI runner.
+    monkeypatch.setattr(settings, "request_timeout_seconds", 0.5)
     monkeypatch.setattr(isolated_db, "claim_resume_processing", slow_claim)
     monkeypatch.setattr(
         resumes, "parse_document", AsyncMock(return_value="Synthetic resume")
