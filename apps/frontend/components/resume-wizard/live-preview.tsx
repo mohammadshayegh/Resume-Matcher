@@ -14,7 +14,7 @@ function dedupeSkills(skills: string[]): string[] {
   for (const skill of skills) {
     const trimmed = skill.trim();
     // Locale-invariant casing (matches the backend's casefold) — toLocaleLowerCase
-    // would diverge in some locales (e.g. Turkish dotted/dotless I).
+    // keeps matching behavior stable for Unicode input.
     const key = trimmed.toLowerCase();
     if (!trimmed || seen.has(key)) continue;
     seen.add(key);

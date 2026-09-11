@@ -99,8 +99,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libatspi2.0-0 \
     libgtk-3-0 \
-    # CJK fonts for Chinese/Japanese/Korean PDF rendering via Playwright
-    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -14,7 +14,6 @@ import { useTranslations } from '@/lib/i18n';
 
 interface UseRegenerateWizardProps {
   resumeId: string;
-  outputLanguage?: string;
   /** Refresh the acknowledged resume; reject if refresh fails so Retry can fetch again. */
   onSuccess?: () => void | Promise<void>;
   onError?: (error: string) => void;
@@ -61,7 +60,6 @@ interface UseRegenerateWizardReturn {
  */
 export function useRegenerateWizard({
   resumeId,
-  outputLanguage = 'en',
   onSuccess,
   onError,
 }: UseRegenerateWizardProps): UseRegenerateWizardReturn {
@@ -118,7 +116,6 @@ export function useRegenerateWizard({
         resume_id: resumeId,
         items: selectedItems,
         instruction: instruction || t('builder.regenerate.instructionDialog.defaultInstruction'),
-        output_language: outputLanguage,
       };
 
       const response = await regenerateItemsApi(request);
@@ -135,7 +132,7 @@ export function useRegenerateWizard({
     } finally {
       if (isCurrent(token)) setIsGenerating(false);
     }
-  }, [resumeId, selectedItems, instruction, outputLanguage, onError, t, begin, isCurrent]);
+  }, [resumeId, selectedItems, instruction, onError, t, begin, isCurrent]);
 
   // Reset all state
   const reset = useCallback(() => {

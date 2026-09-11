@@ -322,48 +322,6 @@ export async function updateFeatureConfig(config: FeatureConfigUpdate): Promise<
   return res.json();
 }
 
-// Language configuration types
-export type SupportedLanguage = 'en' | 'es' | 'zh' | 'ja' | 'pt' | 'fr' | 'ko';
-
-export interface LanguageConfig {
-  ui_language: SupportedLanguage;
-  content_language: SupportedLanguage;
-  supported_languages: SupportedLanguage[];
-}
-
-export interface LanguageConfigUpdate {
-  ui_language?: SupportedLanguage;
-  content_language?: SupportedLanguage;
-}
-
-// Fetch language configuration
-export async function fetchLanguageConfig(): Promise<LanguageConfig> {
-  const res = await apiFetch('/config/language', { credentials: 'include' });
-
-  if (!res.ok) {
-    throw new Error(`Failed to load language config (status ${res.status}).`);
-  }
-
-  return res.json();
-}
-
-// Update language configuration
-export async function updateLanguageConfig(update: LanguageConfigUpdate): Promise<LanguageConfig> {
-  const res = await apiFetch('/config/language', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(update),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || `Failed to update language config (status ${res.status}).`);
-  }
-
-  return res.json();
-}
-
 export interface PromptOption {
   id: string;
   label: string;

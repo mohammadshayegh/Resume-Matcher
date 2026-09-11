@@ -786,21 +786,6 @@ class FeatureConfigResponse(BaseModel):
     enable_interview_prep: bool = False
 
 
-class LanguageConfigRequest(BaseModel):
-    """Request to update language settings."""
-
-    ui_language: str | None = None  # en, es, zh, ja - for interface
-    content_language: str | None = None  # en, es, zh, ja - for generated content
-
-
-class LanguageConfigResponse(BaseModel):
-    """Response for language settings."""
-
-    ui_language: str = "en"  # Interface language
-    content_language: str = "en"  # Generated content language
-    supported_languages: list[str] = ["en", "es", "zh", "ja", "pt", "fr", "ko"]
-
-
 class PromptOption(BaseModel):
     """Prompt option for resume tailoring."""
 

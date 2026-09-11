@@ -12,7 +12,7 @@ import {
 import { API_BASE } from '@/lib/api/client';
 import { printRequestHeaders } from '@/lib/api/print-auth';
 import { translate } from '@/lib/i18n/server';
-import { resolveLocale } from '@/lib/i18n/locale';
+import { defaultLocale } from '@/i18n/config';
 import { withLocalizedDefaultSections } from '@/lib/utils/section-helpers';
 
 type PageProps = {
@@ -34,7 +34,6 @@ type PageProps = {
     compactMode?: string;
     showContactIcons?: string;
     accentColor?: string;
-    lang?: string;
     /** Scoped, short-lived token the backend's PDF renderer passes in. */
     print_token?: string;
   }>;
@@ -163,7 +162,7 @@ export default async function PrintResumePage({ params, searchParams }: PageProp
   const resolvedParams = await params;
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const resumeData = await fetchResumeData(resolvedParams.id, resolvedSearchParams?.print_token);
-  const locale = resolveLocale(resolvedSearchParams?.lang);
+  const locale = defaultLocale;
   const t = (key: string, params?: Record<string, string | number>) =>
     translate(locale, key, params);
   const localizedResumeData = withLocalizedDefaultSections(resumeData, t);
@@ -251,14 +250,11 @@ export default async function PrintResumePage({ params, searchParams }: PageProp
   };
 
   return (
-    // `lang` also drives Chromium's own font fallback during PDF render, which
-    // matters for the CJK faces (L-08).
     <div className="resume-print bg-white" lang={locale}>
       <Resume
         resumeData={localizedResumeData}
         template={settings.template}
         settings={printSettings}
-        locale={locale}
         additionalSectionLabels={additionalSectionLabels}
         sectionHeadings={sectionHeadings}
         fallbackLabels={fallbackLabels}

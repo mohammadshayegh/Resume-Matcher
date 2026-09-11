@@ -28,7 +28,6 @@ class TestRegenerateSchemas(unittest.TestCase):
             resume_id="resume_1",
             items=[item],
             instruction="x" * 2000,
-            output_language="en",
         )
 
         with self.assertRaises(ValidationError):
@@ -36,7 +35,22 @@ class TestRegenerateSchemas(unittest.TestCase):
                 resume_id="resume_1",
                 items=[item],
                 instruction="x" * 2001,
-                output_language="en",
+            )
+
+    def test_regenerate_request_rejects_non_english_output(self) -> None:
+        item = RegenerateItemInput(
+            item_id="skills",
+            item_type="skills",
+            title="Skills",
+            current_content=["Python"],
+        )
+
+        with self.assertRaises(ValidationError):
+            RegenerateRequest(
+                resume_id="resume_1",
+                items=[item],
+                instruction="Improve wording",
+                output_language="es",
             )
 
 
@@ -61,7 +75,6 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
             instruction="Improve wording",
-            output_language="en",
         )
 
         mock_db = AsyncMock()
@@ -127,7 +140,6 @@ class TestRegenerateEndpoints(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
             instruction="Improve wording",
-            output_language="en",
         )
 
         mock_db = AsyncMock()

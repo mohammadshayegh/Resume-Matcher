@@ -4,7 +4,6 @@ import type {
 } from '@/components/common/resume_previewer_context';
 import type { ResumeData } from '@/components/dashboard/resume-component';
 import { type TemplateSettings } from '@/lib/types/template-settings';
-import { type Locale } from '@/i18n/config';
 import { clearResumeWizardCompletion } from '@/lib/utils/resume-wizard-storage';
 import { API_BASE, DEFAULT_TIMEOUT_MS, apiPost, apiPatch, apiDelete, apiFetch } from './client';
 
@@ -225,11 +224,7 @@ export async function updateResume(
   return payload.data;
 }
 
-export function getResumePdfUrl(
-  resumeId: string,
-  settings?: TemplateSettings,
-  locale?: Locale
-): string {
+export function getResumePdfUrl(resumeId: string, settings?: TemplateSettings): string {
   const normalizedId = normalizeResumeId(resumeId);
   const params = new URLSearchParams();
 
@@ -254,19 +249,14 @@ export function getResumePdfUrl(
     params.set('template', 'swiss-single');
     params.set('pageSize', 'A4');
   }
-  if (locale) {
-    params.set('lang', locale);
-  }
-
   return `${API_BASE}/resumes/${encodeURIComponent(normalizedId)}/pdf?${params.toString()}`;
 }
 
 export async function downloadResumePdf(
   resumeId: string,
-  settings?: TemplateSettings,
-  locale?: Locale
+  settings?: TemplateSettings
 ): Promise<Blob> {
-  const url = getResumePdfUrl(resumeId, settings, locale);
+  const url = getResumePdfUrl(resumeId, settings);
   const res = await apiFetch(url);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -315,25 +305,17 @@ export async function renameResume(resumeId: string, title: string): Promise<voi
 }
 
 /** Downloads cover letter as PDF */
-export function getCoverLetterPdfUrl(
-  resumeId: string,
-  pageSize: 'A4' | 'LETTER' = 'A4',
-  locale?: Locale
-): string {
+export function getCoverLetterPdfUrl(resumeId: string, pageSize: 'A4' | 'LETTER' = 'A4'): string {
   const normalizedId = normalizeResumeId(resumeId);
   const params = new URLSearchParams({ pageSize });
-  if (locale) {
-    params.set('lang', locale);
-  }
   return `${API_BASE}/resumes/${encodeURIComponent(normalizedId)}/cover-letter/pdf?${params.toString()}`;
 }
 
 export async function downloadCoverLetterPdf(
   resumeId: string,
-  pageSize: 'A4' | 'LETTER' = 'A4',
-  locale?: Locale
+  pageSize: 'A4' | 'LETTER' = 'A4'
 ): Promise<Blob> {
-  const url = getCoverLetterPdfUrl(resumeId, pageSize, locale);
+  const url = getCoverLetterPdfUrl(resumeId, pageSize);
   const res = await apiFetch(url);
   if (!res.ok) {
     const text = await res.text().catch(() => '');

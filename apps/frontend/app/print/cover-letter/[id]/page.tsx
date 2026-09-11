@@ -8,7 +8,7 @@
 import { API_BASE } from '@/lib/api/client';
 import { printRequestHeaders } from '@/lib/api/print-auth';
 import { translate } from '@/lib/i18n/server';
-import { resolveLocale } from '@/lib/i18n/locale';
+import { defaultLocale } from '@/i18n/config';
 
 const PAGE_DIMENSIONS = {
   A4: { width: 210, height: 297 },
@@ -21,7 +21,6 @@ type PageProps = {
   params: Promise<{ id: string }>;
   searchParams?: Promise<{
     pageSize?: string;
-    lang?: string;
     /** Scoped, short-lived token the backend's PDF renderer passes in. */
     print_token?: string;
   }>;
@@ -79,7 +78,7 @@ export default async function PrintCoverLetterPage({ params, searchParams }: Pag
 
   const pageSize = parsePageSize(resolvedSearchParams?.pageSize);
   const pageDims = PAGE_DIMENSIONS[pageSize];
-  const locale = resolveLocale(resolvedSearchParams?.lang);
+  const locale = defaultLocale;
 
   // Fetch cover letter data from API (same pattern as resume)
   const { coverLetter, personalInfo } = await fetchCoverLetterData(

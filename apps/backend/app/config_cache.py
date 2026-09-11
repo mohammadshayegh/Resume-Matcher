@@ -70,6 +70,5 @@ def load_config() -> dict[str, Any]:
 
 
 def get_content_language() -> str:
-    """Get configured content language from cached config."""
-    config = load_config()
-    return config.get("content_language", config.get("language", "en"))
+    """Return the only supported generated-content language."""
+    return "en"

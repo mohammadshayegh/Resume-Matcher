@@ -370,7 +370,7 @@ async def test_ai_turn_rejects_malformed_complete_envelope_without_advancing(
     assert state.model_dump() == before
 
 
-async def test_ai_turn_localizes_missing_question_fallback_to_content_language() -> None:
+async def test_ai_turn_uses_english_missing_question_fallback() -> None:
     state = _state_on_section("workExperience")
     result_without_question = {
         "resume_data": _AI_EXPERIENCE_RESULT["resume_data"],
@@ -380,29 +380,27 @@ async def test_ai_turn_localizes_missing_question_fallback_to_content_language()
     }
 
     with (
-        patch("app.services.resume_wizard.get_content_language", return_value="ja"),
         patch(
             "app.services.resume_wizard.complete_json",
             new_callable=AsyncMock,
             return_value=result_without_question,
         ),
     ):
-        result = await run_ai_turn(state, "Acmeでエンジニアをしていました", skip=False)
+        result = await run_ai_turn(state, "I was an engineer at Acme", skip=False)
 
     assert result.current_question.section == "education"
-    assert result.current_question.text == "学歴について、学校名、学位、在籍期間、表彰や主な履修内容を教えてください。"
+    assert result.current_question.text == "Tell me about your education: school, degree, dates, and any honors or standout coursework."
 
 
-def test_apply_review_localizes_deterministic_review_copy() -> None:
+def test_apply_review_uses_english_deterministic_copy() -> None:
     state = _state_on_section("skills")
     state.resume_data.personalInfo.name = "Aiko"
 
-    with patch("app.services.resume_wizard.get_content_language", return_value="ja"):
-        result = apply_review(state)
+    result = apply_review(state)
 
-    assert result.current_question.text == "マスター履歴書を作成する前に、内容を確認しましょう。"
+    assert result.current_question.text == "Let's review what's here before we create your master resume."
     assert result.warnings
-    assert all("Add" not in warning for warning in result.warnings)
+    assert all(warning.startswith(("Add", "Education", "Skills")) for warning in result.warnings)
 
 
 def test_apply_back_restores_previous_snapshot() -> None:

@@ -6,9 +6,8 @@
 #
 # Runs BEFORE every `git push` and BLOCKS the push if anything is red:
 #   1. backend test suite        (uv run pytest — LLM/eval tests excluded by default)
-#   2. frontend locale parity     (pure-Python check; guards the i18n build break)
-#   3. frontend test suite        (vitest — runs when Node is available, else skipped)
-#   4. frontend typecheck         (tsc --noEmit — catches test fixtures that
+#   2. frontend test suite        (vitest — runs when Node is available, else skipped)
+#   3. frontend typecheck         (tsc --noEmit — catches test fixtures that
 #                                  `next build` never sees)
 #
 # Activate once per clone:   git config core.hooksPath .githooks
@@ -41,17 +40,7 @@ else
   status=1
 fi
 
-# 2) Frontend locale parity (no Node required) -----------------------------
-if command -v python3 >/dev/null 2>&1; then
-  echo "▶ frontend : locale parity (messages/*.json vs en.json)"
-  if ! python3 "$REPO_ROOT/scripts/check_locale_parity.py"; then
-    status=1
-  fi
-else
-  echo "  ⚠ python3 not found — skipping locale parity check" >&2
-fi
-
-# 3) Frontend test suite (vitest) — only when Node + the local binary are present
+# 2) Frontend test suite (vitest) — only when Node + the local binary are present
 #    (git hooks may run without nvm's node on PATH; skip rather than hard-fail).
 VITEST="$REPO_ROOT/apps/frontend/node_modules/.bin/vitest"
 if command -v node >/dev/null 2>&1 && [ -x "$VITEST" ]; then
@@ -64,7 +53,7 @@ else
   echo "  ⚠ node or vitest not available — skipping frontend tests" >&2
 fi
 
-# 4) Frontend typecheck (tsc --noEmit) — `next build` only typechecks its own
+# 3) Frontend typecheck (tsc --noEmit) — `next build` only typechecks its own
 #    module graph and .dockerignore excludes tests from the image, so a broken
 #    test fixture goes unnoticed by every other gate. tsconfig includes tests,
 #    so this is the only thing that catches them.

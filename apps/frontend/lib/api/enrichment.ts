@@ -127,7 +127,6 @@ export interface RegenerateRequest {
   resume_id: string;
   items: RegenerateItemInput[];
   instruction: string;
-  output_language?: string;
 }
 
 export interface RegeneratedItem {

@@ -29,7 +29,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 
 ### Routers (all prefixed `/api/v1`)
 - `health.py` — `GET /health` (liveness, no LLM call), `GET /status` (LLM health + DB stats).
-- `config.py` — `/config/llm-api-key` (GET/PUT), `/config/llm-test` (POST live health check), `/config/features`, `/config/language`, `/config/prompts`, `/config/feature-prompts`, `/config/api-keys` (per-provider CRUD), `/config/reset` (POST; confirmation token `{"confirm": "RESET_ALL_DATA"}` in the JSON **body**, not a query param).
+- `config.py` — `/config/llm-api-key` (GET/PUT), `/config/llm-test` (POST live health check), `/config/features`, `/config/prompts`, `/config/feature-prompts`, `/config/api-keys` (per-provider CRUD), `/config/reset` (POST; confirmation token `{"confirm": "RESET_ALL_DATA"}` in the JSON **body**, not a query param).
 - `resumes.py` — the biggest router: `/resumes/upload`, `GET /resumes`, `/resumes/list`, `/resumes/improve` + `/improve/preview` + `/improve/confirm`, `PATCH /resumes/{id}`, `/{id}/pdf`, `/{id}/retry-processing`, cover-letter/outreach/title PATCH + on-demand generate, `/{id}/job-description`, `/{id}/cover-letter/pdf`.
 - `jobs.py` — `/jobs/upload` (batch JD text → job_ids), `GET /jobs/{id}`.
 - `job_search.py` — `/job-search/options`, `/job-search/preferences` (GET/PUT), `/job-search/status`, `/job-search/run` (JobSpy scrape, **one per user per 4h, enforced server-side**), `/job-search/results` (GET/DELETE; the persisted listing cache, kept 14 days), `/job-search/save`. See [`features/job-search.md`](../../docs/agent/features/job-search.md).
@@ -46,7 +46,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 ## Request / Data Flow (improve = core pipeline)
 
 `POST /resumes/improve/preview` is the canonical path:
-1. Load resume + job from `db`; resolve content language (`config_cache`) and `prompt_id`.
+1. Load resume + job from `db`; resolve `prompt_id`.
 2. `extract_job_keywords(jd)` (LLM, cached on the job by content hash).
 3. If structured `processed_data` exists → **diff mode**: skill-target plan → `generate_resume_diffs` → `apply_diffs` → `verify_diff_result`. Else → fallback `improve_resume` (full-output).
 4. **Local safety nets** (always run, defense-in-depth): `_preserve_personal_info`, `_restore_original_dates`, `restore_dates_from_markdown`, `_preserve_original_skills`, `_protect_custom_sections`.
@@ -63,7 +63,7 @@ Prompts are **plain Python string constants** — no Jinja, no external prompt f
 
 | File | Holds |
 |------|-------|
-| `app/prompts/templates.py` | Resume parse, keyword extraction, the 3 improve variants, diff prompt, skill-target plan, cover-letter / outreach / title, `RESUME_SCHEMA_EXAMPLE`, `CRITICAL_TRUTHFULNESS_RULES`, `LANGUAGE_NAMES` + `get_language_name()` |
+| `app/prompts/templates.py` | Resume parse, keyword extraction, the 3 improve variants, diff prompt, skill-target plan, cover-letter / outreach / title, `RESUME_SCHEMA_EXAMPLE`, `CRITICAL_TRUTHFULNESS_RULES`, `get_language_name()` |
 | `app/prompts/enrichment.py` | `ANALYZE_RESUME_PROMPT`, `ENHANCE_DESCRIPTION_PROMPT`, `REGENERATE_ITEM_PROMPT`, `REGENERATE_SKILLS_PROMPT` |
 | `app/prompts/refinement.py` | `KEYWORD_INJECTION_PROMPT`, `VALIDATION_POLISH_PROMPT`, `AI_PHRASE_BLACKLIST`, `AI_PHRASE_REPLACEMENTS` |
 | `app/prompts/__init__.py` | Re-exports template constants; placeholder validation |
@@ -74,7 +74,7 @@ Prompts are **plain Python string constants** — no Jinja, no external prompt f
 
 **Custom feature prompts (user-editable):** cover-letter & outreach prompts can be overridden in `config.json` (`cover_letter_prompt`, `outreach_message_prompt`). On save (`PUT /config/feature-prompts`) they are validated by `validate_prompt_placeholders()` to contain all of `REQUIRED_FEATURE_PROMPT_PLACEHOLDERS` = `{job_description}`, `{resume_data}`, `{output_language}`; missing → HTTP 422. Empty string = "use default". At runtime `cover_letter.py::_resolve_feature_prompt` picks custom-or-default and falls back to the built-in default (with a warning) if a custom prompt fails `.format()`.
 
-**Language:** every generative prompt takes `{output_language}` (full name from `get_language_name(code)`), so all output is produced in the configured content language (`en`/`es`/`zh`/`ja`/`pt`).
+**Language:** English is the only supported output language. `get_language_name()` always returns `English` for prompt interpolation.
 
 ---
 
@@ -150,7 +150,6 @@ Config via `.env` (see `.env.example`). Interactive API docs at `/docs`.
 | JD matching | [`features/jd-match.md`](../../docs/agent/features/jd-match.md) |
 | Custom sections | [`features/custom-sections.md`](../../docs/agent/features/custom-sections.md) |
 | Job search (JobSpy) | [`features/job-search.md`](../../docs/agent/features/job-search.md) |
-| i18n | [`features/i18n.md`](../../docs/agent/features/i18n.md) |
 | PDF / templates | [`design/pdf-template-guide.md`](../../docs/agent/design/pdf-template-guide.md) · [`design/template-system.md`](../../docs/agent/design/template-system.md) |
 
 ---
@@ -170,7 +169,7 @@ Layout (`apps/backend/tests/`):
 
 Key fixtures/tools: `conftest.py::isolated_db` swaps the global `db` singleton for a disposable temp-file SQLite database across **all** router modules (for real-DB endpoint/e2e tests); `respx` mocks the HTTP transport so `llm.py`'s real routing runs against a fake Ollama / OpenAI server (gotcha: litellm 1.86 needs `disable_aiohttp_transport=True` for respx to intercept). Keep every test **anti-theater** — it must fail when its target breaks.
 
-**Local push gate:** `.githooks/pre-push` runs this suite + a locale-parity check and blocks red pushes (`git config core.hooksPath .githooks`; see [`.githooks/README.md`](../../.githooks/README.md)). We avoid a GitHub Actions PR gate (high external-PR volume).
+**Local push gate:** `.githooks/pre-push` runs this suite and blocks red pushes (`git config core.hooksPath .githooks`; see [`.githooks/README.md`](../../.githooks/README.md)). We avoid a GitHub Actions PR gate (high external-PR volume).
 
 ## Out of Scope
 

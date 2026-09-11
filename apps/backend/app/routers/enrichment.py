@@ -167,7 +167,7 @@ async def analyze_resume(
 
     require_source_size(processed_data)
 
-    # Build prompt with content language
+    # Build the prompt with the fixed English output language
     resume_json = json.dumps(processed_data)
     language = get_content_language()
     output_language = get_language_name(language)
@@ -367,7 +367,7 @@ async def generate_enhancements(
             else:
                 answers_text += f"Additional info: {answer.answer}\n\n"
 
-        # Build enhancement prompt with content language
+        # Build the enhancement prompt with the fixed English output language
         current_desc = item.get("current_description", [])
         current_desc_text = "\n".join(f"- {d}" for d in current_desc) if current_desc else "(No description)"
 
@@ -619,8 +619,7 @@ async def regenerate_items(
     if not request.items:
         raise HTTPException(status_code=400, detail="No items selected for regeneration")
 
-    # Get language name for LLM
-    output_language = get_language_name(request.output_language)
+    output_language = get_language_name()
 
     # A bounded collection may queue work, but at most four items call AI.
     semaphore = asyncio.Semaphore(MAX_ITEM_WORKERS)

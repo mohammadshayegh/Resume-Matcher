@@ -52,16 +52,12 @@ import {
   Clock,
   Settings2,
   Search,
-  Globe,
   Trash2,
   AlertTriangle,
 } from 'lucide-react';
-import { useLanguage } from '@/lib/context/language-context';
 import { useTranslations } from '@/lib/i18n';
 import { ATTACHMENT_DRAFT_STORAGE_PREFIX } from '@/lib/utils/attachment-draft-storage';
 import { RESUME_DRAFT_STORAGE_PREFIX, safeStorage } from '@/lib/utils/resume-draft-storage';
-import type { SupportedLanguage } from '@/lib/api/config';
-import type { Locale } from '@/i18n/config';
 
 type Status = 'idle' | 'loading' | 'error' | 'testing';
 
@@ -81,12 +77,6 @@ const KNOWN_PROVIDERS: LLMProvider[] = [
   'ollama',
   'codex',
 ];
-
-// Shared segmented-control styling (language pickers below).
-const SEGMENTED_BUTTON_BASE =
-  'border border-black font-mono transition-all duration-150 ease-out shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none disabled:cursor-not-allowed disabled:opacity-50';
-const SEGMENTED_BUTTON_ACTIVE = 'bg-blue-700 text-white border-black hover:bg-blue-800';
-const SEGMENTED_BUTTON_INACTIVE = 'bg-white text-black hover:bg-secondary';
 
 /** Format a token count compactly: 1234567 -> "1.23M", 51863 -> "51.9K". */
 const formatTokens = (value: number): string => {
@@ -181,17 +171,6 @@ export default function SettingsPage() {
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [successMessage, setSuccessDialogMessage] = useState({ title: '', description: '' });
   const [isResetting, setIsResetting] = useState(false);
-
-  // Language settings
-  const {
-    contentLanguage,
-    uiLanguage,
-    setContentLanguage,
-    setUiLanguage,
-    languageNames,
-    supportedLanguages,
-    isLoading: languageLoading,
-  } = useLanguage();
 
   // Translations
   const { t } = useTranslations();
@@ -1271,68 +1250,6 @@ export default function SettingsPage() {
               </h2>
             </div>
             <JobSearchSettings />
-          </section>
-
-          {/* Language Settings Section */}
-          <section className="space-y-6">
-            <div className="flex items-center gap-2 border-b border-black/10 pb-2">
-              <Globe className="w-4 h-4" />
-              <h2 className="font-mono text-sm font-bold uppercase tracking-wider">
-                {t('settings.uiLanguage')} & {t('settings.contentLanguage')}
-              </h2>
-            </div>
-
-            {/* UI Language */}
-            <div className="space-y-4">
-              <div>
-                <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-ink-soft mb-2">
-                  {t('settings.uiLanguage')}
-                </h3>
-                <p className="text-sm text-ink-soft mb-3">{t('settings.uiLanguageDescription')}</p>
-              </div>
-
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {supportedLanguages.map((lang) => (
-                    <button
-                      key={`ui-${lang}`}
-                      onClick={() => setUiLanguage(lang as Locale)}
-                      disabled={languageLoading}
-                      className={`px-4 py-3 text-sm ${SEGMENTED_BUTTON_BASE} ${uiLanguage === lang ? SEGMENTED_BUTTON_ACTIVE : SEGMENTED_BUTTON_INACTIVE}`}
-                    >
-                      {languageNames[lang]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Content Language */}
-            <div className="space-y-4 pt-4 border-t border-paper-tint">
-              <div>
-                <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-ink-soft mb-2">
-                  {t('settings.contentLanguage')}
-                </h3>
-                <p className="text-sm text-ink-soft mb-3">
-                  {t('settings.contentLanguageDescription')}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {supportedLanguages.map((lang) => (
-                    <button
-                      key={`content-${lang}`}
-                      onClick={() => setContentLanguage(lang as SupportedLanguage)}
-                      disabled={languageLoading}
-                      className={`px-4 py-3 text-sm ${SEGMENTED_BUTTON_BASE} ${contentLanguage === lang ? SEGMENTED_BUTTON_ACTIVE : SEGMENTED_BUTTON_INACTIVE}`}
-                    >
-                      {languageNames[lang]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
           </section>
 
           {/* Danger Zone */}

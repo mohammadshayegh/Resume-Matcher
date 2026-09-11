@@ -22,7 +22,7 @@ apps/frontend/
 │   └── resume/              # Templates (single, two-column)
 ├── lib/
 │   ├── api/                 # client.ts, resume.ts, config.ts
-│   ├── context/             # status-cache.tsx, language-context.tsx
+│   ├── context/             # status-cache.tsx
 │   └── constants/           # page-dimensions.ts
 └── messages/                # i18n translations
 ```
@@ -69,12 +69,6 @@ const { status, refreshStatus, incrementResumes, decrementResumes } = useStatusC
 ```
 - Caches system status, 30-min auto-refresh
 - Optimistic counter updates on user actions
-
-### LanguageProvider
-```typescript
-const { contentLanguage, setContentLanguage } = useLanguage();
-```
-- Content generation language (en, es, zh, ja)
 
 ## API Client (`lib/api/`)
 

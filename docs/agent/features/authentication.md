@@ -247,10 +247,7 @@ Properties, all tested in `tests/unit/test_auth.py`:
   Constructing a fresh `NextResponse` after `setAll` discards the refreshed
   session and logs users out at random.
 - **`/login` is outside the `(default)` route group** and uses
-  `useUiTranslations`, not `useTranslations`. `LanguageProvider` syncs the
-  content language via an authenticated `GET /config/language`; mounting it on
-  the sign-in screen would fire a guaranteed 401 on every visit — and it breaks
-  the production prerender.
+  `useUiTranslations` for English UI copy without depending on the default layout.
 - **`/print/*` is a public path in the middleware.** A cookie check there would
   only break PDF export; those pages carry their own scoped token.
 - **`middleware.ts` triggers a Next.js 16 deprecation warning** ("use `proxy`

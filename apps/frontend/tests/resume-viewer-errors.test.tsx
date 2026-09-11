@@ -24,9 +24,6 @@ vi.mock('@/lib/i18n', () => ({ useTranslations: () => ({ t: translate }) }));
 vi.mock('@/lib/context/status-cache', () => ({
   useStatusCache: () => ({ decrementResumes, setHasMasterResume }),
 }));
-vi.mock('@/lib/context/language-context', () => ({
-  useLanguage: () => ({ uiLanguage: 'en' }),
-}));
 vi.mock('@/components/enrichment/enrichment-modal', () => ({ EnrichmentModal: () => null }));
 vi.mock('@/components/dashboard/resume-component', () => ({ default: () => null }));
 vi.mock('@/lib/api/resume', () => ({

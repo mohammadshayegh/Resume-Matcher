@@ -17,12 +17,12 @@ App Router under `app/`. A `(default)` route group wraps the main app in provide
 | `/builder`                 | `app/(default)/builder/page.tsx`       | Client wrapper → `components/builder/resume-builder.tsx` | Master-resume editor (forms, drag-drop sections, templates, AI regenerate, cover letter / outreach)                                              |
 | `/tailor`                  | `app/(default)/tailor/page.tsx`        | Client                                                   | Paste JD → preview/confirm tailored resume (diff modal)                                                                                          |
 | `/tracker`                 | `app/(default)/tracker/page.tsx`       | Client                                                   | Kanban application tracker — 7-column board (drag/drop, bulk ops, manual add)                                                                    |
-| `/settings`                | `app/(default)/settings/page.tsx`      | Client                                                   | AI backend **read-only** (active provider/model, health, consumption + remaining quota, connection probe), features, prompts, language, reset DB |
+| `/settings`                | `app/(default)/settings/page.tsx`      | Client                                                   | AI backend **read-only** (active provider/model, health, consumption + remaining quota, connection probe), features, prompts, reset DB |
 | `/resumes/[id]`            | `app/(default)/resumes/[id]/page.tsx`  | Client                                                   | View one resume, download PDF, rename, enrichment modal                                                                                          |
-| `/print/resumes/[id]`      | `app/print/resumes/[id]/page.tsx`      | **Server**                                               | Print-only resume render for PDF (reads `searchParams` for template settings + `lang`)                                                           |
+| `/print/resumes/[id]`      | `app/print/resumes/[id]/page.tsx`      | **Server**                                               | Print-only resume render for PDF (reads `searchParams` for template settings)                                                           |
 | `/print/cover-letter/[id]` | `app/print/cover-letter/[id]/page.tsx` | **Server**                                               | Print-only cover-letter render for PDF                                                                                                           |
 
-`app/layout.tsx` (root) wires fonts (Geist + Space Grotesk) and global CSS. `app/(default)/layout.tsx` nests providers: `StatusCacheProvider` → `LanguageProvider` → `ResumePreviewProvider` → `LocalizedErrorBoundary`.
+`app/layout.tsx` (root) wires fonts (Geist + Space Grotesk) and global CSS. `app/(default)/layout.tsx` nests providers: `StatusCacheProvider` → `ResumePreviewProvider` → `LocalizedErrorBoundary`.
 
 > Most pages are `'use client'`. The `print/*` pages are intentionally server components and fetch from the backend directly via `API_BASE` + `lib/i18n/server.ts` (`translate`). Do not add `'use client'` to them.
 
@@ -51,14 +51,14 @@ components/
 lib/
   api/               # backend client (see Data Flow)
   i18n/              # translation engine (see i18n)
-  context/           # status-cache, language-context
+  context/           # status-cache
   utils/             # download, html-sanitizer, keyword-matcher, section-helpers
   types/             # template-settings, lucide.d.ts
   config/version.ts  # APP_VERSION / codename
   constants/page-dimensions.ts
 hooks/               # use-file-upload, use-regenerate-wizard, use-enrichment-wizard
-i18n/config.ts       # locale list + names/flags (NOTE: distinct from lib/i18n)
-messages/            # en/es/zh/ja/pt-BR JSON (see i18n)
+i18n/config.ts       # English locale type/default (NOTE: distinct from lib/i18n)
+messages/            # English UI copy
 tests/               # vitest (see Testing)
 ```
 
@@ -72,7 +72,7 @@ All backend calls go through **`lib/api/`** — never call `fetch` to the backen
   - Base URL: `NEXT_PUBLIC_API_URL` (default `'/'`) → `API_BASE` becomes `/api/v1`. On the **server** a `/`-relative base is rewritten to `http://127.0.0.1:8000/api/v1` (`INTERNAL_API_ORIGIN`); browser uses the relative path (proxied by `next.config.ts` rewrites to `BACKEND_ORIGIN`).
   - Default request timeout **240_000ms** (matches backend `wait_for` hard limit). `AbortError` → friendly "Request timed out" message.
 - `lib/api/resume.ts` — resumes/jobs: upload, improve / improve.preview / improve.confirm, fetch, list, update (PATCH), PDF URLs + blob download, delete, cover-letter / outreach generate+update, rename, retry-processing, fetch JD.
-- `lib/api/config.ts` — LLM config, `testLlmConnection`, `fetchAiUsage` (active backend + token consumption + remaining quota), system `/status`, feature flags, prompt config, **feature prompts** (`FeaturePromptsError` for 422 `missing_placeholders`), **per-provider API-key management** (each provider's key persists independently — switching the active provider no longer wipes another's; stored encrypted server-side), language config, `resetDatabase`. `PROVIDER_INFO` lists supported providers + default models.
+- `lib/api/config.ts` — LLM config, `testLlmConnection`, `fetchAiUsage` (active backend + token consumption + remaining quota), system `/status`, feature flags, prompt config, **feature prompts** (`FeaturePromptsError` for 422 `missing_placeholders`), **per-provider API-key management** (each provider's key persists independently — switching the active provider no longer wipes another's; stored encrypted server-side), `resetDatabase`. `PROVIDER_INFO` lists supported providers + default models.
 - `lib/api/enrichment.ts` — AI enrichment (analyze/enhance/apply) and AI regenerate (regenerate/apply-regenerated).
 - `lib/api/tracker.ts` — application-tracker CRUD/bulk over `apiFetch/apiPost/apiPatch/apiDelete`: grouped list, detail (JD + resume), manual add, status/position/notes PATCH, bulk move, delete, bulk-delete.
 - `lib/api/index.ts` — barrel re-export (note: not everything is re-exported; some functions are imported from `./resume` / `./config` / `./enrichment` directly).
@@ -82,44 +82,14 @@ All backend calls go through **`lib/api/`** — never call `fetch` to the backen
 **Shared client state (React Context, not a fetch lib):**
 
 - `StatusCacheProvider` (`lib/context/status-cache.tsx`) — caches `/status` (LLM health 30min, DB stats 5min stale), with optimistic counter updates. Use `useStatusCache()` / `useIsStatusStale()`.
-- `LanguageProvider` (`lib/context/language-context.tsx`) — UI + content language, localStorage + backend sync. Use `useLanguage()`.
 
 > The **tracker board owns its state locally** — `components/tracker/kanban-board.tsx` holds the columns in `useState` and owns the single `@dnd-kit` `DndContext`. There is **no** `TrackerProvider` / tracker context; don't look for one.
 
 ---
 
-## i18n — READ THIS BEFORE TOUCHING TRANSLATIONS
+## English UI copy
 
-Two distinct settings, configured independently in Settings:
-
-- **UI language** — interface text, client-only (`uiLanguage`, localStorage).
-- **Content language** — language the LLM writes resumes/cover letters in (`contentLanguage`, persisted to backend).
-
-**Supported locales (source of truth = `i18n/config.ts`):** `en`, `es`, `zh`, `ja`, `pt` (the file is `messages/pt-BR.json`, imported as `pt`). The `docs/agent/features/i18n.md` table is stale — it omits `pt`; trust the code.
-
-Engine (no external i18n lib, plain JSON):
-
-- `i18n/config.ts` — `locales`, `defaultLocale='en'`, `localeNames`, `localeFlags`.
-- `lib/i18n/messages.ts` — static-imports every locale JSON; the critical types live here.
-- `lib/i18n/translations.ts` — `useTranslations()` returns `{ t, messages, locale }`; `t('a.b.c', params)` does dot-path lookup + `{placeholder}` substitution. Missing key returns the key string (no throw).
-- `lib/i18n/server.ts` — `translate(locale, key, params)` for server/print pages.
-
-### ⚠️ CRITICAL build-breaking constraint
-
-`lib/i18n/messages.ts`:
-
-```ts
-export type Messages = typeof en; // shape derived from en.json
-const allMessages: Record<Locale, Messages> = { en, es, zh, ja, pt };
-```
-
-Because every locale is typed as `Messages` (= the exact shape of `en.json`), **every locale JSON must structurally match `en.json` exactly.** Add a key to `en.json` and the production `tsc` / `next build` FAILS until that same key path exists in `es`, `zh`, `ja`, and `pt-BR`. (A real build break was caused by exactly this.)
-
-**When editing translations:** any key you add/remove/rename in `en.json` MUST be mirrored in all 5 files (`en`, `es`, `zh`, `ja`, `pt-BR`) with identical structure. `npm run dev` may tolerate drift; the build will not.
-
-The tracker ships a `tracker.*` key tree (`columns`, `modal`, `manualAdd`, `bulk`, `errors`, `scroll`) plus `nav.applicationTracker`, present in all 5 locale files — subject to the same parity rule.
-
-See [i18n.md](../../docs/agent/features/i18n.md), [i18n-preparation.md](../../docs/agent/features/i18n-preparation.md).
+English is the only supported UI and generated-content language. UI strings live in `messages/en.json`; `useTranslations()` and the server-side `translate()` helper both read that single bundle.
 
 ---
 
@@ -151,7 +121,7 @@ Resume render templates have their own CSS modules in `components/resume/styles/
 # from apps/frontend
 npm install
 npm run dev       # next dev --turbopack (:3000)
-npm run build     # next build  (runs tsc — i18n shape drift fails HERE)
+npm run build     # next build (runs tsc)
 npm run start
 npm run lint      # eslint .
 npm run format    # prettier --write .
@@ -166,7 +136,7 @@ Backend must run separately on :8000 (see root CLAUDE.md). Frontend proxies `/ap
 
 1. All UI MUST follow Swiss International Style (links above). `rounded-none`, 1px black borders, hard shadows, brand tokens.
 2. Run `npm run lint` and `npm run format` before committing frontend changes.
-3. Any `en.json` key change MUST be mirrored across all 5 locale files (see i18n) or the build breaks.
+3. Keep all user-facing UI copy in `messages/en.json`.
 4. **Textarea Enter-key pattern** — confirmed in code (e.g. `app/(default)/tailor/page.tsx`): when a textarea sits inside a dialog/form that submits on Enter, stop propagation:
    ```tsx
    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -195,12 +165,12 @@ Backend must run separately on :8000 (see root CLAUDE.md). Frontend proxies `/ap
 
 Specs (`tests/`):
 
-- **i18n** — `i18n-utils.test.ts` (`getNestedValue` dot-path + `applyParams` substitution), `i18n-locale-parity.test.ts` (every `messages/*.json` must structurally match `en.json` — the in-suite guard for the build break).
+- **UI copy** — `i18n-utils.test.ts` (`getNestedValue` dot-path + `applyParams` substitution).
 - **lib/utils** — `keyword-matcher.test.ts`, `section-helpers.test.ts`, `html-sanitizer.test.ts` (XSS whitelist), `download-utils.test.ts`.
 - **lib/api** — `api-client.test.ts` (URL resolution, timeout/AbortError; `fetch` stubbed).
 - **components** — `diff-preview-modal.test.tsx`, `regenerate-wizard.test.tsx`.
 
-Pure logic (i18n, utils, api) is tested directly with stubbed `fetch`/`t`; component specs render via Testing Library. The locale-parity spec mirrors `scripts/check_locale_parity.py` (which the pre-push hook also runs without Node). The local `pre-push` gate runs this vitest suite too when Node is available — `git config core.hooksPath .githooks`; see [`.githooks/README.md`](../../.githooks/README.md).
+Pure logic (UI copy, utils, api) is tested directly with stubbed `fetch`/`t`; component specs render via Testing Library. The local `pre-push` gate runs this vitest suite when Node is available — `git config core.hooksPath .githooks`; see [`.githooks/README.md`](../../.githooks/README.md).
 
 ---
 
@@ -214,7 +184,6 @@ Pure logic (i18n, utils, api) is tested directly with stubbed `fetch`/`t`; compo
 | Scope / principles / process      | [scope-and-principles.md](../../docs/agent/scope-and-principles.md), [workflow.md](../../docs/agent/workflow.md)                                                                                                                                                                                                                             |
 | Swiss design system (MANDATORY)   | [pack README](../../docs/portable/swiss-design-system/README.md), [tokens](../../docs/portable/swiss-design-system/tokens.md), [components](../../docs/portable/swiss-design-system/components.md), [anti-patterns](../../docs/portable/swiss-design-system/anti-patterns.md), [layouts](../../docs/portable/swiss-design-system/layouts.md) |
 | Next.js performance (REQUIRED)    | [pack README](../../docs/portable/nextjs-performance/README.md), [checklist](../../docs/portable/nextjs-performance/checklist.md)                                                                                                                                                                                                            |
-| i18n                              | [i18n.md](../../docs/agent/features/i18n.md), [i18n-preparation.md](../../docs/agent/features/i18n-preparation.md)                                                                                                                                                                                                                           |
 | Resume templates / PDF            | [resume-templates.md](../../docs/agent/features/resume-templates.md), [template-system.md](../../docs/agent/design/template-system.md), [pdf-template-guide.md](../../docs/agent/design/pdf-template-guide.md), [adding-resume-templates.md](../../docs/agent/features/adding-resume-templates.md)                                           |
 | Custom sections                   | [custom-sections.md](../../docs/agent/features/custom-sections.md)                                                                                                                                                                                                                                                                           |
 | AI enrichment                     | [enrichment.md](../../docs/agent/features/enrichment.md)                                                                                                                                                                                                                                                                                     |

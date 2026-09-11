@@ -1696,7 +1696,7 @@ async def improve_resume_endpoint(
     if not job:
         raise HTTPException(status_code=404, detail="Job description not found")
 
-    # Load feature configuration and content language
+    # Load feature configuration and the fixed English output language
     feature_config = _load_config()
     enable_cover_letter = feature_config.get("enable_cover_letter", False)
     enable_outreach = feature_config.get("enable_outreach_message", False)
@@ -1708,7 +1708,7 @@ async def improve_resume_endpoint(
         # Extract keywords from job description
         job_keywords = await extract_job_keywords(job["content"])
 
-        # Generate improved resume in the configured language
+        # Generate the improved resume in English
         prompt_id = request.prompt_id or _get_default_prompt_id()
 
         original_resume_data = _get_original_resume_data(resume)
@@ -2022,7 +2022,6 @@ async def download_resume_pdf(
     compactMode: bool = Query(False),
     showContactIcons: bool = Query(False),
     accentColor: str = Query("blue", pattern="^(blue|green|orange|red)$"),
-    lang: str | None = Query(None, pattern="^[a-z]{2}(-[A-Z]{2})?$"),
     user: AuthUser = Depends(get_current_user),
 ) -> Response:
     """Generate a PDF for one of the caller's resumes using headless Chromium.
@@ -2040,7 +2039,6 @@ async def download_resume_pdf(
     - bodyFont: serif, sans-serif, or mono
     - compactMode: enable tighter spacing
     - showContactIcons: show icons in contact info
-    - lang: locale used for print page translations
     """
     resume = await db.get_resume(resume_id, user_id=user.id)
     if not resume:
@@ -2065,8 +2063,6 @@ async def download_resume_pdf(
         f"&showContactIcons={str(showContactIcons).lower()}"
         f"&accentColor={accentColor}"
     )
-    if lang:
-        params = f"{params}&lang={lang}"
     # The headless browser carries none of the caller's Supabase session, so it
     # gets a short-lived token scoped to this one resume; the print page reads
     # it from the query string and sends it back as a bearer token. See
@@ -2539,7 +2535,6 @@ async def get_job_description_for_resume(
 async def download_cover_letter_pdf(
     resume_id: str,
     pageSize: str = Query("A4", pattern="^(A4|LETTER)$"),
-    lang: str | None = Query(None, pattern="^[a-z]{2}(-[A-Z]{2})?$"),
     user: AuthUser = Depends(get_current_user),
 ) -> Response:
     """Generate a PDF for a cover letter using headless Chromium.
@@ -2547,7 +2542,6 @@ async def download_cover_letter_pdf(
     Args:
         resume_id: The ID of the resume containing the cover letter
         pageSize: A4 or LETTER
-        lang: locale used for print page translations
     """
     resume = await db.get_resume(resume_id, user_id=user.id)
     if not resume:
@@ -2561,8 +2555,6 @@ async def download_cover_letter_pdf(
 
     # Build print URL (same pattern as resume PDF)
     url = f"{settings.frontend_base_url}/print/cover-letter/{resume_id}?pageSize={pageSize}"
-    if lang:
-        url = f"{url}&lang={lang}"
     # Same one-resume, minutes-long token as the resume PDF path.
     url = f"{url}&print_token={issue_print_token(user.id, resume_id)}"
 

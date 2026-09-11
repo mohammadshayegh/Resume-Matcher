@@ -17,9 +17,6 @@ vi.mock('@/lib/i18n', () => ({
 vi.mock('@/lib/context/status-cache', () => ({
   useStatusCache: () => ({ decrementResumes: vi.fn(), setHasMasterResume: vi.fn() }),
 }));
-vi.mock('@/lib/context/language-context', () => ({
-  useLanguage: () => ({ uiLanguage: 'en' }),
-}));
 vi.mock('@/components/dashboard/resume-component', () => ({
   default: ({ resumeData }: { resumeData: { personalInfo?: { name?: string } } }) => (
     <div data-testid="resume-name">{resumeData.personalInfo?.name}</div>
@@ -322,7 +319,7 @@ describe('resume viewer enrichment completion', () => {
   });
 });
 
-it('preserves an acknowledged enrichment refresh failure through a UI language change', async () => {
+it('preserves an acknowledged enrichment refresh failure through a copy refresh', async () => {
   mockedFetchResume
     .mockResolvedValueOnce(resume('Before'))
     .mockRejectedValueOnce(new Error('offline'))

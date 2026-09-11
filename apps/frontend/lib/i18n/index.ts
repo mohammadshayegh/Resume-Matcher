@@ -1,8 +1,5 @@
 /**
- * Internationalization utilities
- *
- * Simple JSON-based translations without external dependencies.
- * Messages are imported statically and selected based on current UI language.
+ * English UI copy utilities.
  */
 
 export { useTranslations, getMessages, translate, type Messages } from './translations';

@@ -1,25 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useLanguage } from '@/lib/context/language-context';
+import { useCallback } from 'react';
+import { defaultLocale } from '@/i18n/config';
 import type { Locale } from '@/i18n/config';
 import { getMessages as getMessagesForLocale, type Messages } from './messages';
 import { applyParams, getNestedValue } from './utils';
 
 /**
- * Hook to get translations for the current UI language
+ * Hook to get English UI copy
  *
  * Usage:
  * const { t } = useTranslations();
  * <button>{t('common.save')}</button>
  */
 export function useTranslations() {
-  const { uiLanguage } = useLanguage();
-  const [messages, setMessages] = useState<Messages>(getMessagesForLocale(uiLanguage));
-
-  useEffect(() => {
-    setMessages(getMessagesForLocale(uiLanguage));
-  }, [uiLanguage]);
+  const messages = getMessagesForLocale(defaultLocale);
 
   /**
    * Translate a key to the current language
@@ -33,7 +28,7 @@ export function useTranslations() {
     [messages]
   );
 
-  return { t, messages, locale: uiLanguage };
+  return { t, messages, locale: defaultLocale };
 }
 
 /**
