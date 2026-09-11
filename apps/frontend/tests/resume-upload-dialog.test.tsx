@@ -41,7 +41,11 @@ function chooseResume(name = 'resume.pdf') {
   });
 }
 
-function ControlledDialog({ onUploadComplete }: { onUploadComplete: (resumeId: string) => void }) {
+function ControlledDialog({
+  onUploadComplete,
+}: {
+  onUploadComplete: (resumeId: string, isMaster: boolean) => void;
+}) {
   const [open, setOpen] = useState(true);
   return (
     <>
@@ -85,7 +89,7 @@ describe('ResumeUploadDialog upload propagation', () => {
     });
 
     expect(onUploadComplete).toHaveBeenCalledTimes(1);
-    expect(onUploadComplete).toHaveBeenCalledWith('resume-1');
+    expect(onUploadComplete).toHaveBeenCalledWith('resume-1', true);
     expect(onOpenChange).toHaveBeenCalledTimes(1);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -245,7 +249,7 @@ describe('saved uploads with failed HTTP responses', () => {
       render(<ControlledDialog onUploadComplete={onComplete} />);
       chooseResume();
       fireEvent.click(await screen.findByRole('button', { name: 'dashboard.retryProcessing' }));
-      await waitFor(() => expect(onComplete).toHaveBeenCalledWith('saved'));
+      await waitFor(() => expect(onComplete).toHaveBeenCalledWith('saved', true));
       expect(retryProcessing).toHaveBeenCalledExactlyOnceWith('saved');
       expect(fetch).toHaveBeenCalledTimes(1);
       expect(onComplete).toHaveBeenCalledTimes(1);
@@ -265,7 +269,7 @@ describe('saved uploads with failed HTTP responses', () => {
     expect(onComplete).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'dashboard.deleteResume' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'dashboard.retryProcessing' }));
-    await waitFor(() => expect(onComplete).toHaveBeenCalledExactlyOnceWith('saved'));
+    await waitFor(() => expect(onComplete).toHaveBeenCalledExactlyOnceWith('saved', true));
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -328,7 +332,7 @@ describe('saved uploads with failed HTTP responses', () => {
     await screen.findByRole('button', { name: 'dashboard.retryProcessing' });
     await act(async () => old.resolve(uploadFailure(504, 'old')));
     fireEvent.click(screen.getByRole('button', { name: 'dashboard.retryProcessing' }));
-    await waitFor(() => expect(onComplete).toHaveBeenCalledExactlyOnceWith('new'));
+    await waitFor(() => expect(onComplete).toHaveBeenCalledExactlyOnceWith('new', true));
     expect(retryProcessing).toHaveBeenCalledExactlyOnceWith('new');
   });
 

@@ -26,7 +26,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface ResumeUploadDialogProps {
   trigger?: React.ReactNode;
-  onUploadComplete?: (resumeId: string) => void;
+  onUploadComplete?: (resumeId: string, isMaster: boolean) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }
@@ -87,10 +87,12 @@ export function ResumeUploadDialog({
 
   const handleUploadSuccess = ({
     resumeId,
+    isMaster,
     fileId,
     message,
   }: {
     resumeId: string;
+    isMaster: boolean;
     fileId?: string;
     message: string;
   }) => {
@@ -108,7 +110,7 @@ export function ResumeUploadDialog({
         removeFile(fileId); // Clear file for next time
       }
     }, 1500);
-    onUploadComplete?.(resumeId);
+    onUploadComplete?.(resumeId, isMaster);
   };
 
   const [
@@ -151,6 +153,7 @@ export function ResumeUploadDialog({
         }
         handleUploadSuccess({
           resumeId: data.resume_id,
+          isMaster: data.is_master === true,
           fileId: uploadedFile.id,
           message: successMessage,
         });
@@ -235,6 +238,7 @@ export function ResumeUploadDialog({
 
       handleUploadSuccess({
         resumeId: resumeIdToRetry,
+        isMaster: failedIsMaster,
         fileId: fileIdToRemove,
         message: t('dashboard.retrySuccess'),
       });

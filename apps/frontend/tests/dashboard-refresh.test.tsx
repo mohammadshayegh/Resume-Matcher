@@ -29,8 +29,15 @@ vi.mock('@/lib/api/resume', () => ({
   fetchJobDescription: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('@/components/dashboard/resume-upload-dialog', () => ({
-  ResumeUploadDialog: ({ onUploadComplete }: { onUploadComplete: (id: string) => void }) => (
-    <button onClick={() => onUploadComplete('uploaded')}>finish upload</button>
+  ResumeUploadDialog: ({
+    onUploadComplete,
+  }: {
+    onUploadComplete: (id: string, isMaster: boolean) => void;
+  }) => (
+    <>
+      <button onClick={() => onUploadComplete('uploaded', true)}>finish upload</button>
+      <button onClick={() => onUploadComplete('secondary', false)}>finish secondary upload</button>
+    </>
   ),
 }));
 vi.mock('@/components/dashboard/master-resume-choice-dialog', () => ({
@@ -102,6 +109,19 @@ describe('dashboard refresh ownership', () => {
     expect(localStorage.getItem('master_resume_id')).toBe('new-master');
     expect(screen.getByText('new-card')).toBeInTheDocument();
     expect(screen.queryByText('old-card')).not.toBeInTheDocument();
+  });
+
+  it('adds a secondary resume without replacing the master resume', async () => {
+    localStorage.setItem('master_resume_id', 'master');
+    api.list.mockResolvedValue([row('master', true), row('secondary')]);
+    render(<Dashboard />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole('button', { name: 'finish secondary upload' }));
+    await act(async () => {});
+
+    expect(localStorage.getItem('master_resume_id')).toBe('master');
+    expect(screen.getByText('secondary')).toBeInTheDocument();
   });
 
   it('does not clear the current master when the previous master returns 404', async () => {

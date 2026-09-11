@@ -17,7 +17,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 | Config cache | Shared, TTL-cached (5 min) read of `data/config.json`; `get_content_language()` | `app/config_cache.py` |
 | Database | Async SQLAlchemy/SQLite facade; tables `resumes`/`jobs`/`improvements`/`applications`/`api_keys`; returns plain dicts; global `db` singleton | `app/database.py`, `app/models.py`, `app/db_engine.py` |
 | Tracker | Kanban application-tracker endpoints | `app/routers/applications.py`, `app/schemas/applications.py` |
-| Job search | JobSpy board scraping; strict option values in a leaf module; per-user prefs + cooldown | `app/routers/job_search.py`, `app/services/job_search.py`, `app/job_search_options.py` |
+| Job search | JobSpy board scraping; strict option values in a leaf module; per-user prefs, cooldown, and a deduped 14-day listing cache | `app/routers/job_search.py`, `app/services/job_search.py`, `app/job_search_options.py` |
 | LLM | LiteLLM wrapper: Router, retries, JSON extraction, timeouts, provider quirks | `app/llm.py` |
 | PDF | Headless Chromium render of frontend `/print/*` pages; lazy browser init | `app/pdf.py` |
 | Routers | HTTP endpoints (see below) | `app/routers/*.py` |
@@ -32,7 +32,7 @@ Stack: FastAPI 0.128 · Python **3.13+** · Pydantic v2 / pydantic-settings · S
 - `config.py` — `/config/llm-api-key` (GET/PUT), `/config/llm-test` (POST live health check), `/config/features`, `/config/language`, `/config/prompts`, `/config/feature-prompts`, `/config/api-keys` (per-provider CRUD), `/config/reset` (POST; confirmation token `{"confirm": "RESET_ALL_DATA"}` in the JSON **body**, not a query param).
 - `resumes.py` — the biggest router: `/resumes/upload`, `GET /resumes`, `/resumes/list`, `/resumes/improve` + `/improve/preview` + `/improve/confirm`, `PATCH /resumes/{id}`, `/{id}/pdf`, `/{id}/retry-processing`, cover-letter/outreach/title PATCH + on-demand generate, `/{id}/job-description`, `/{id}/cover-letter/pdf`.
 - `jobs.py` — `/jobs/upload` (batch JD text → job_ids), `GET /jobs/{id}`.
-- `job_search.py` — `/job-search/options`, `/job-search/preferences` (GET/PUT), `/job-search/status`, `/job-search/run` (JobSpy scrape, **one per user per 4h, enforced server-side**), `/job-search/save`. See [`features/job-search.md`](../../docs/agent/features/job-search.md).
+- `job_search.py` — `/job-search/options`, `/job-search/preferences` (GET/PUT), `/job-search/status`, `/job-search/run` (JobSpy scrape, **one per user per 4h, enforced server-side**), `/job-search/results` (GET/DELETE; the persisted listing cache, kept 14 days), `/job-search/save`. See [`features/job-search.md`](../../docs/agent/features/job-search.md).
 - `enrichment.py` — `/enrichment/analyze/{id}`, `/enhance`, `/apply/{id}`, `/regenerate`, `/apply-regenerated/{id}`.
 
 ### Services

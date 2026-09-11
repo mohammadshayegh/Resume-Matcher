@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   upload: vi.fn(),
   preview: vi.fn(),
   confirm: vi.fn(),
+  list: vi.fn(),
   push: vi.fn(),
   back: vi.fn(),
   setPreview: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('@/lib/api/resume', () => ({
   uploadJobDescriptions: api.upload,
   previewImproveResume: api.preview,
   confirmImproveResume: api.confirm,
+  fetchResumeList: api.list,
 }));
 vi.mock('@/lib/api/config', () => ({
   fetchPromptConfig: async () => ({ prompt_options: [], default_prompt_id: 'keywords' }),
@@ -95,6 +97,26 @@ beforeEach(() => {
   api.upload.mockResolvedValue('job');
   api.preview.mockResolvedValue(preview);
   api.confirm.mockResolvedValue(confirmed);
+  api.list.mockResolvedValue([
+    {
+      resume_id: 'master',
+      filename: 'Product Manager.pdf',
+      is_master: true,
+      parent_id: null,
+      processing_status: 'ready',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    },
+    {
+      resume_id: 'alternate',
+      filename: 'Engineering Resume.pdf',
+      is_master: false,
+      parent_id: null,
+      processing_status: 'ready',
+      created_at: '2026-02-01T00:00:00Z',
+      updated_at: '2026-02-01T00:00:00Z',
+    },
+  ]);
 });
 
 async function generate() {
@@ -105,6 +127,23 @@ async function generate() {
 }
 
 describe('actual tailor page transaction boundaries', () => {
+  it('tailors and confirms the resume selected by the user', async () => {
+    render(<TailorPage />);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole('button', { name: 'tailor.resumeSelector.label' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Engineering Resume.pdf/ }));
+    await generate();
+    await act(async () => screen.getByRole('button', { name: 'Confirm preview' }).click());
+
+    expect(api.upload).toHaveBeenCalledWith(
+      ['A software engineer role building useful tools with Python and SQL.'],
+      'alternate'
+    );
+    expect(api.preview).toHaveBeenCalledWith('alternate', 'job', 'keywords');
+    expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({ resume_id: 'alternate' }));
+  });
+
   it('clears the missing-diff confirmation state after successful save', async () => {
     api.preview.mockResolvedValue({ ...preview, data: { ...preview.data, diff_summary: null } });
     render(<TailorPage />);

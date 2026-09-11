@@ -12,6 +12,8 @@ import {
   uploadJobDescriptions,
   previewImproveResume,
   confirmImproveResume,
+  fetchResumeList,
+  type ResumeListItem,
 } from '@/lib/api/resume';
 import { fetchPromptConfig, type PromptOption } from '@/lib/api/config';
 import { getPreviewErrorMessage } from '@/lib/utils/preview-error';
@@ -28,12 +30,16 @@ export default function TailorPage() {
   const { t } = useTranslations();
   const { begin, isCurrent, invalidate } = useOperationOwner('tailor');
   const confirmedResponses = useRef(new WeakMap<ImprovedResult, ImprovedResult>());
+  const previewSourceIds = useRef(new WeakMap<ImprovedResult, string>());
   const countedResumes = useRef(new Set<string>());
   const confirmationBusy = useRef(false);
   const [jobDescription, setJobDescription] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
+  const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
+  const [availableResumes, setAvailableResumes] = useState<ResumeListItem[]>([]);
+  const [resumeListLoading, setResumeListLoading] = useState(true);
+  const [resumeListError, setResumeListError] = useState<string | null>(null);
   const [promptOptions, setPromptOptions] = useState<PromptOption[]>([]);
   const [selectedPromptId, setSelectedPromptId] = useState('keywords');
   const [promptLoading, setPromptLoading] = useState(false);
@@ -87,12 +93,56 @@ export default function TailorPage() {
 
   useEffect(() => {
     const storedId = localStorage.getItem('master_resume_id');
-    if (!storedId) {
-      router.push('/dashboard');
-    } else {
-      setMasterResumeId(storedId);
-    }
-  }, [router]);
+    let cancelled = false;
+
+    const loadResumes = async () => {
+      setResumeListLoading(true);
+      setResumeListError(null);
+      try {
+        const resumes = await fetchResumeList(true);
+        if (cancelled) return;
+        const readyResumes = resumes
+          .filter((resume) => resume.processing_status === 'ready')
+          .sort((left, right) => {
+            if (left.is_master !== right.is_master) return left.is_master ? -1 : 1;
+            if (Boolean(left.parent_id) !== Boolean(right.parent_id))
+              return left.parent_id ? 1 : -1;
+            return Date.parse(right.updated_at) - Date.parse(left.updated_at);
+          });
+        setAvailableResumes(readyResumes);
+        const preferred =
+          readyResumes.find((resume) => resume.resume_id === storedId) ??
+          readyResumes.find((resume) => resume.is_master) ??
+          readyResumes[0];
+        setSelectedResumeId(preferred?.resume_id ?? null);
+      } catch (failure) {
+        if (cancelled) return;
+        console.error('Failed to load resumes for tailoring', failure);
+        setResumeListError(t('tailor.resumeSelector.loadFailed'));
+        if (storedId) {
+          setAvailableResumes([
+            {
+              resume_id: storedId,
+              filename: null,
+              is_master: true,
+              parent_id: null,
+              processing_status: 'ready',
+              created_at: '',
+              updated_at: '',
+            },
+          ]);
+          setSelectedResumeId(storedId);
+        }
+      } finally {
+        if (!cancelled) setResumeListLoading(false);
+      }
+    };
+
+    void loadResumes();
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,8 +177,9 @@ export default function TailorPage() {
   };
 
   const buildConfirmPayload = (result: ImprovedResult) => {
-    if (!masterResumeId) {
-      throw new Error('Master resume ID is missing.');
+    const sourceResumeId = previewSourceIds.current.get(result) ?? selectedResumeId;
+    if (!sourceResumeId) {
+      throw new Error('Source resume ID is missing.');
     }
     const resumePreview = result.data.resume_preview;
     if (!resumePreview || typeof resumePreview !== 'object' || Array.isArray(resumePreview)) {
@@ -143,7 +194,7 @@ export default function TailorPage() {
       throw new Error('Resume preview data is invalid.');
     }
     return {
-      resume_id: masterResumeId,
+      resume_id: sourceResumeId,
       job_id: result.data.job_id,
       preview_id: result.data.preview_id ?? null,
       improved_data: resumePreview as ResumeData,
@@ -215,6 +266,7 @@ export default function TailorPage() {
       // 2. Preview Resume
       const result = await previewImproveResume(resumeId, jobId, selectedPromptId);
       if (!isCurrent(token)) return;
+      previewSourceIds.current.set(result, resumeId);
 
       if (!result?.data?.diff_summary || !result?.data?.detailed_changes) {
         console.warn('Diff data missing for tailor preview; requesting user confirmation.');
@@ -241,13 +293,13 @@ export default function TailorPage() {
 
   const handleGenerate = async () => {
     const trimmedDescription = jobDescription.trim();
-    if (!trimmedDescription || !masterResumeId) return;
+    if (!trimmedDescription || !selectedResumeId) return;
     const validationError = getGenerateValidationError(trimmedDescription);
     if (validationError) {
       setError(validationError);
       return;
     }
-    const resumeId = masterResumeId;
+    const resumeId = selectedResumeId;
     const token = begin();
     if (token === null) return;
     setIsLoading(true);
@@ -355,13 +407,13 @@ export default function TailorPage() {
   const handleRegenerateConfirm = async () => {
     setShowRegenerateDialog(false);
     const trimmedDescription = jobDescription.trim();
-    if (!trimmedDescription || !masterResumeId) return;
+    if (!trimmedDescription || !selectedResumeId) return;
     const validationError = getGenerateValidationError(trimmedDescription);
     if (validationError) {
       setError(validationError);
       return;
     }
-    const resumeId = masterResumeId;
+    const resumeId = selectedResumeId;
     const token = begin();
     if (token === null) return;
     setIsLoading(true);
@@ -424,6 +476,52 @@ export default function TailorPage() {
 
         <div className="space-y-6">
           <Dropdown
+            options={availableResumes.map((resume, index) => ({
+              id: resume.resume_id,
+              label:
+                resume.title ||
+                resume.filename ||
+                t('tailor.resumeSelector.unnamed', { number: index + 1 }),
+              description: resume.is_master
+                ? t('tailor.resumeSelector.master')
+                : resume.parent_id
+                  ? t('tailor.resumeSelector.tailored')
+                  : t('tailor.resumeSelector.uploaded'),
+            }))}
+            value={selectedResumeId ?? ''}
+            onChange={setSelectedResumeId}
+            label={t('tailor.resumeSelector.label')}
+            description={t('tailor.resumeSelector.description')}
+            disabled={isLoading || resumeListLoading || showDiffModal || showMissingDiffDialog}
+          />
+
+          {resumeListLoading && (
+            <p className="font-mono text-sm uppercase text-steel-grey" role="status">
+              {t('tailor.resumeSelector.loading')}
+            </p>
+          )}
+
+          {!resumeListLoading && availableResumes.length === 0 && (
+            <div className="border-2 border-warning bg-amber-50 p-4">
+              <p className="font-mono text-sm font-bold uppercase text-amber-800">
+                {t('tailor.resumeSelector.noneReady')}
+              </p>
+              <Link
+                href="/dashboard"
+                className="mt-2 inline-block font-mono text-sm text-primary underline"
+              >
+                {t('tailor.resumeSelector.goToDashboard')}
+              </Link>
+            </div>
+          )}
+
+          {resumeListError && (
+            <p className="font-mono text-sm text-warning" role="status">
+              {resumeListError}
+            </p>
+          )}
+
+          <Dropdown
             options={
               promptOptions.length > 0
                 ? promptOptions.map((opt) => ({
@@ -482,7 +580,14 @@ export default function TailorPage() {
           <Button
             size="lg"
             onClick={handleGenerate}
-            disabled={isLoading || statusLoading || !jobDescription.trim() || !isLlmConfigured}
+            disabled={
+              isLoading ||
+              statusLoading ||
+              resumeListLoading ||
+              !selectedResumeId ||
+              !jobDescription.trim() ||
+              !isLlmConfigured
+            }
             className="w-full"
           >
             {isLoading ? (

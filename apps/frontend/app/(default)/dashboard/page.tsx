@@ -254,16 +254,18 @@ export default function DashboardPage() {
     return () => window.removeEventListener('focus', handleFocus);
   }, [loadTailoredResumes, checkResumeStatus]);
 
-  const handleUploadComplete = (resumeId: string) => {
+  const handleUploadComplete = (resumeId: string, isMaster: boolean) => {
     loadRequestIdRef.current += 1;
+    setIsUploadDialogOpen(false);
     void loadTailoredResumes();
-    localStorage.setItem('master_resume_id', resumeId);
-    adoptMasterResume(resumeId);
-    // Check status after upload completes
-    checkResumeStatus(resumeId);
+    if (isMaster) {
+      localStorage.setItem('master_resume_id', resumeId);
+      adoptMasterResume(resumeId);
+      checkResumeStatus(resumeId);
+      setHasMasterResume(true);
+    }
     // Update cached counters
     incrementResumes();
-    setHasMasterResume(true);
   };
 
   const handleChooseUpload = () => {
@@ -411,8 +413,8 @@ export default function DashboardPage() {
     return Math.abs(hash);
   };
 
-  // master + tailored resumes + "create tailored" + "job search"
-  const totalCards = 1 + tailoredResumes.length + 2;
+  // master + saved resumes + "add resume" + "create tailored" + "job search"
+  const totalCards = 1 + tailoredResumes.length + 3;
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -613,10 +615,13 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* 2. Tailored Resumes */}
+        {/* 2. Other saved resumes */}
         {tailoredResumes.map((resume) => {
           const title =
-            resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
+            resume.title ||
+            resume.jobSnippet ||
+            resume.filename ||
+            (resume.parent_id ? t('dashboard.tailoredResume') : t('dashboard.resume'));
           const color = cardPalette[hashTitle(title) % cardPalette.length];
           return (
             <Card
@@ -652,7 +657,38 @@ export default function DashboardPage() {
           );
         })}
 
-        {/* 3. Create Tailored Resume */}
+        {/* 3. Add another source resume */}
+        {masterResumeId && (
+          <Card
+            className="aspect-square h-full"
+            variant="interactive"
+            role="button"
+            tabIndex={0}
+            aria-label={t('dashboard.addResume')}
+            onClick={() => setIsUploadDialogOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setIsUploadDialogOpen(true);
+              }
+            }}
+          >
+            <div className="flex h-full flex-1 flex-col justify-between">
+              <div className="flex h-14 w-14 items-center justify-center border-2 border-black bg-white">
+                <Plus className="h-7 w-7" aria-hidden="true" />
+              </div>
+              <div>
+                <CardTitle className="text-lg uppercase">{t('dashboard.addResume')}</CardTitle>
+                <CardDescription className="mt-2 text-xs">
+                  {'// '}
+                  {t('dashboard.addResumeDescription')}
+                </CardDescription>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* 4. Create Tailored Resume */}
         <Card className="aspect-square h-full" variant="default">
           <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
             <Button
@@ -668,7 +704,7 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* 4. Job Search */}
+        {/* 5. Job Search */}
         <Link href="/job-search" className="block h-full">
           <Card variant="interactive" className="aspect-square h-full bg-canvas">
             <div className="flex-1 flex flex-col justify-between">
@@ -685,7 +721,7 @@ export default function DashboardPage() {
           </Card>
         </Link>
 
-        {/* 4. Fillers */}
+        {/* 6. Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (
           <Card
             key={`filler-${index}`}
@@ -714,6 +750,15 @@ export default function DashboardPage() {
           onConfirm={confirmDeleteAndReupload}
           variant="danger"
         />
+
+        {masterResumeId && (
+          <ResumeUploadDialog
+            open={isUploadDialogOpen}
+            onOpenChange={setIsUploadDialogOpen}
+            onUploadComplete={handleUploadComplete}
+            trigger={<button type="button" className="hidden" tabIndex={-1} aria-hidden="true" />}
+          />
+        )}
 
         <ConfirmDialog
           open={deleteError}

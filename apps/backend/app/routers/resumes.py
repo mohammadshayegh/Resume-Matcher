@@ -1394,20 +1394,16 @@ async def _improve_preview_flow(
     refinement_attempted = False
     refinement_successful = False
     try:
-        # Get master resume for alignment validation
-        master_resume = await db.get_master_resume(user_id=user_id)
-        master_data = (
-            _get_original_resume_data(master_resume)
-            if master_resume
-            else _get_original_resume_data(resume)
-        )
-        if master_data:
+        # Ground refinement in the resume the user selected. This is normally
+        # the master resume, but users may explicitly tailor another saved resume.
+        source_data = _get_original_resume_data(resume)
+        if source_data:
             initial_match = calculate_keyword_match(improved_data, job_keywords)
             refinement_attempted = True
             progress["stage"] = "refine_resume"
             refinement_result = await refine_resume(
                 initial_tailored=improved_data,
-                master_resume=master_data,
+                master_resume=source_data,
                 job_description=job["content"],
                 job_keywords=job_keywords,
                 config=RefinementConfig(),
@@ -1792,19 +1788,15 @@ async def improve_resume_endpoint(
         refinement_attempted = False
         refinement_successful = False
         try:
-            # Get master resume for alignment validation
-            master_resume = await db.get_master_resume(user_id=user.id)
-            master_data = (
-                _get_original_resume_data(master_resume)
-                if master_resume
-                else _get_original_resume_data(resume)
-            )
-            if master_data:
+            # Keep the legacy direct-improve path consistent with preview/confirm:
+            # refinement must use the explicitly selected source resume.
+            source_data = _get_original_resume_data(resume)
+            if source_data:
                 initial_match = calculate_keyword_match(improved_data, job_keywords)
                 refinement_attempted = True
                 refinement_result = await refine_resume(
                     initial_tailored=improved_data,
-                    master_resume=master_data,
+                    master_resume=source_data,
                     job_description=job["content"],
                     job_keywords=job_keywords,
                     config=RefinementConfig(),

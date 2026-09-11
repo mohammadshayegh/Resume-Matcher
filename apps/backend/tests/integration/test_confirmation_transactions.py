@@ -193,6 +193,40 @@ async def test_changed_inputs_invalidate_unconfirmed_preview(
     resumes.generate_resume_title.assert_not_awaited()
 
 
+async def test_preview_refinement_uses_the_selected_resume_as_its_source(
+    isolated_db: Database,
+    confirmation_client: AsyncClient,
+    sample_resume: dict[str, Any],
+) -> None:
+    master_data = ResumeData.model_validate(copy.deepcopy(sample_resume)).model_dump()
+    master_data["personalInfo"]["name"] = "Master Candidate"
+    await isolated_db.create_resume_atomic_master(
+        content=json.dumps(master_data),
+        processed_data=master_data,
+        processing_status="ready",
+    )
+
+    selected_data = copy.deepcopy(master_data)
+    selected_data["personalInfo"]["name"] = "Selected Candidate"
+    selected = await isolated_db.create_resume(
+        content=json.dumps(selected_data),
+        processed_data=selected_data,
+        processing_status="ready",
+    )
+    job = await isolated_db.create_job(
+        "Python engineer at Acme", resume_id=selected["resume_id"]
+    )
+
+    response = await confirmation_client.post(
+        "/api/v1/resumes/improve/preview",
+        json={"resume_id": selected["resume_id"], "job_id": job["job_id"]},
+    )
+
+    assert response.status_code == 200, response.text
+    refinement_source = resumes.refine_resume.await_args.kwargs["master_resume"]
+    assert refinement_source["personalInfo"]["name"] == "Selected Candidate"
+
+
 @pytest.mark.parametrize("model", [Resume, Improvement])
 @pytest.mark.parametrize("phase", ["before_insert", "after_insert"])
 async def test_required_insert_failure_rolls_back_the_confirmation(
