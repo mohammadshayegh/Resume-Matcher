@@ -1,0 +1,27 @@
+when:
+  - event: push
+  - event: pull_request
+
+steps:
+  frontend:
+    image: node:22-bookworm
+    commands:
+      - cd apps/frontend
+      - npm ci
+      - npm run lint
+      - npm run typecheck
+      - npm test
+      - npm run build
+
+  backend:
+    image: python:3.13-slim-bookworm
+    commands:
+      - cd apps/backend
+      - pip install --disable-pip-version-check uv
+      - uv pip install --system ".[dev]"
+      - pytest
+
+  image:
+    image: docker:29-cli
+    commands:
+      - docker build --tag resume-matcher-ci:${CI_COMMIT_SHA} .
