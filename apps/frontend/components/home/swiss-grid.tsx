@@ -2,9 +2,6 @@
 
 import React from 'react';
 import Image from 'next/image';
-import Link from 'next/link';
-import LayoutGrid from 'lucide-react/dist/esm/icons/layout-grid';
-import Search from 'lucide-react/dist/esm/icons/search';
 import { useTranslations } from '@/lib/i18n';
 import { AccountMenu } from '@/components/auth/account-menu';
 
@@ -34,16 +31,10 @@ export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
           </p>
         </div>
 
-        {/* Content Grid - Scrollable area with NO padding.
-            @container makes the card grid respond to the container's actual
-            width, not the viewport. The Swiss frame is max-w-86rem so on
-            ultra-wide screens the cards no longer over-stretch. */}
+        {/* Scrollable page content. Individual sections own their grids so
+            actions and saved content can have separate visual hierarchy. */}
         <div className="@container flex-1 overflow-y-auto overflow-x-hidden relative z-10">
-          <div className="p-[1.5px]">
-            <div className="grid grid-cols-1 @2xl:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-5 bg-black gap-[1px] border-b border-black">
-              {children}
-            </div>
-          </div>
+          {children}
         </div>
 
         {/* Footer - stays above hovered cards */}
@@ -60,26 +51,6 @@ export const SwissGrid = ({ children }: { children: React.ReactNode }) => {
           </div>
           <div className="flex items-center gap-4">
             <AccountMenu />
-            <Link
-              href="/job-search"
-              className="inline-flex items-center justify-center gap-2 bg-background text-black border border-black px-6 py-2 uppercase font-bold tracking-wide shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none transition-all min-w-[140px] text-center"
-            >
-              <Search className="w-4 h-4" />
-              {t('jobSearch.navLabel')}
-            </Link>
-            <Link
-              href="/tracker"
-              className="inline-flex items-center justify-center gap-2 bg-background text-black border border-black px-6 py-2 uppercase font-bold tracking-wide shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none transition-all min-w-[140px] text-center"
-            >
-              <LayoutGrid className="w-4 h-4" />
-              {t('nav.applicationTracker')}
-            </Link>
-            <Link
-              href="/settings"
-              className="bg-warning text-black border border-black px-6 py-2 uppercase font-bold tracking-wide shadow-sw-sm hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none transition-all min-w-[140px] text-center"
-            >
-              {t('nav.settings')}
-            </Link>
           </div>
         </div>
       </div>

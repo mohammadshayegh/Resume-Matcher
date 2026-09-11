@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import Dashboard from '@/app/(default)/dashboard/page';
 import type { fetchResume, ResumeListItem } from '@/lib/api/resume';
 
@@ -122,6 +122,44 @@ describe('dashboard refresh ownership', () => {
 
     expect(localStorage.getItem('master_resume_id')).toBe('master');
     expect(screen.getByText('secondary')).toBeInTheDocument();
+  });
+
+  it('shows saved resumes in newest-updated-first order', async () => {
+    api.list.mockResolvedValue([
+      row('master', true),
+      { ...row('old-resume'), updated_at: '2026-01-10' },
+      { ...row('new-resume'), updated_at: '2026-03-10' },
+      { ...row('middle-resume'), updated_at: '2026-02-10' },
+    ]);
+
+    render(<Dashboard />);
+    await act(async () => {});
+
+    const newest = screen.getByText('new-resume');
+    const middle = screen.getByText('middle-resume');
+    const oldest = screen.getByText('old-resume');
+    expect(newest.compareDocumentPosition(middle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(middle.compareDocumentPosition(oldest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('separates navigation actions from the saved resume collection', async () => {
+    api.list.mockResolvedValue([row('master', true), row('saved-resume')]);
+
+    render(<Dashboard />);
+    await act(async () => {});
+
+    const actions = screen.getByRole('region', { name: 'dashboard.quickActions' });
+    const resumes = screen.getByRole('region', { name: 'dashboard.myResumes' });
+    expect(within(actions).getByRole('link', { name: /nav\.applicationTracker/ })).toHaveAttribute(
+      'href',
+      '/tracker'
+    );
+    expect(within(actions).getByRole('link', { name: /nav\.settings/ })).toHaveAttribute(
+      'href',
+      '/settings'
+    );
+    expect(within(resumes).getByText('saved-resume')).toBeInTheDocument();
+    expect(within(resumes).queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('does not clear the current master when the previous master returns 404', async () => {
