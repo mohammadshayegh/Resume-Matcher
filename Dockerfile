@@ -9,6 +9,7 @@ FROM node:22-bookworm AS frontend-builder
 # Build argument for API URL (allows customization at build time)
 # Default routes requests through Next.js rewrites on the same origin.
 ARG NEXT_PUBLIC_API_URL=/
+ARG NEXT_PUBLIC_REQUEST_TIMEOUT_MS=600000
 
 # Supabase (Google OAuth) must be supplied at BUILD time, not run time:
 # Next.js inlines every NEXT_PUBLIC_* value into the client bundle during
@@ -31,6 +32,7 @@ ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_REQUEST_TIMEOUT_MS=${NEXT_PUBLIC_REQUEST_TIMEOUT_MS} \
     NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 

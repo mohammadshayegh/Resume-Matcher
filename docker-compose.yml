@@ -9,6 +9,7 @@ services:
         # image (no sign-in screen). See Dockerfile for the full note.
         - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
         - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        - NEXT_PUBLIC_REQUEST_TIMEOUT_MS=${NEXT_PUBLIC_REQUEST_TIMEOUT_MS:-600000}
     container_name: resume-matcher
     ports:
       - "${PORT:-3000}:3000"
@@ -24,6 +25,9 @@ services:
       #- LOG_LEVEL_FILE=${LOG_LEVEL_FILE:-}
       # Debug level for LiteLLM: DEBUG, INFO, WARNING, ERROR
       - LOG_LLM=${LOG_LLM:-WARNING}
+      # Shared AI-operation deadline. Keep this in sync with the frontend
+      # build arg above: 600 seconds / 10 minutes by default.
+      - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-600}
       #- LOG_LLM_FILE=${LOG_LLM_FILE:-}
       # LLM Configuration - configure via Settings UI or set env vars for explicit overrides
       # Supported providers: openai, anthropic, openrouter, gemini, deepseek, ollama

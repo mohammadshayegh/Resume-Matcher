@@ -10,7 +10,7 @@ const rawTimeoutMs = process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS;
 const parsedTimeoutMs = rawTimeoutMs ? Number(rawTimeoutMs) : NaN;
 const REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeoutMs)
   ? Math.min(1_800_000, Math.max(30_000, parsedTimeoutMs))
-  : 240_000;
+  : 600_000;
 
 const nextConfig: NextConfig = {
   output: 'standalone',

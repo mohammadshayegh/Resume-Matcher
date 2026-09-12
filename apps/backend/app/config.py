@@ -342,9 +342,9 @@ class Settings(BaseSettings):
     # client AbortController, both driven by NEXT_PUBLIC_REQUEST_TIMEOUT_MS):
     # whichever layer is shortest aborts first, so raising only one silently fails
     # (this is why issue #776's backend-only workaround didn't work). Local LLMs
-    # (Ollama, llama.cpp, …) often need longer than the 240s default; bounded to
+    # (Ollama, llama.cpp, …) often need longer than the 600s default; bounded to
     # [30, 1800]s so a stuck request can't hold a worker indefinitely.
-    request_timeout_seconds: int = 240
+    request_timeout_seconds: int = 600
     preview_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
 
     @field_validator("preview_ttl_seconds", mode="before")
@@ -360,15 +360,15 @@ class Settings(BaseSettings):
     @field_validator("request_timeout_seconds", mode="before")
     @classmethod
     def clamp_request_timeout(cls, v: Any) -> int:
-        """Clamp to [30, 1800] seconds; fall back to 240 on blank/invalid input."""
+        """Clamp to [30, 1800] seconds; fall back to 600 on blank/invalid input."""
         if v is None or (isinstance(v, str) and not v.strip()):
-            return 240
+            return 600
         try:
             seconds = int(float(str(v).strip()))
         except (TypeError, ValueError, OverflowError):
             # OverflowError guards against inf (int(float("inf"))); ValueError
             # against nan/garbage. A bad env value must never crash startup.
-            return 240
+            return 600
         return max(30, min(1800, seconds))
 
     # Reasoning effort for models that support it (OpenAI gpt-5 family,

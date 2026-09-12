@@ -44,12 +44,12 @@ export const API_BASE = resolveRuntimeApiBase(toApiBase(API_URL));
 // Default request timeout (ms). MUST match the backend's REQUEST_TIMEOUT_SECONDS
 // and the Next.js proxyTimeout (next.config.ts) — the shortest layer aborts
 // first, so all three are driven by the same NEXT_PUBLIC_REQUEST_TIMEOUT_MS env
-// var. Bounded to [30s, 30min]. Local LLMs often need more than the 240s default.
+// var. Bounded to [30s, 30min]. Local LLMs often need more than the 600s default.
 const rawTimeoutMs = process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS;
 const parsedTimeoutMs = rawTimeoutMs ? Number(rawTimeoutMs) : NaN;
 export const DEFAULT_TIMEOUT_MS = Number.isFinite(parsedTimeoutMs)
   ? Math.min(1_800_000, Math.max(30_000, parsedTimeoutMs))
-  : 240_000;
+  : 600_000;
 
 const REQUEST_TIMEOUT_MESSAGE =
   'Request timed out. If you are running a local LLM, increase NEXT_PUBLIC_REQUEST_TIMEOUT_MS (and the backend REQUEST_TIMEOUT_SECONDS to match); otherwise try a shorter job description or check your connection.';
@@ -115,7 +115,7 @@ async function bufferResponse(response: Response): Promise<Response> {
  *
  * @param endpoint - API endpoint path or absolute URL
  * @param options - Standard RequestInit options
- * @param timeoutMs - Optional request timeout in milliseconds (default: DEFAULT_TIMEOUT_MS, from NEXT_PUBLIC_REQUEST_TIMEOUT_MS, 240_000 if unset)
+ * @param timeoutMs - Optional request timeout in milliseconds (default: DEFAULT_TIMEOUT_MS, from NEXT_PUBLIC_REQUEST_TIMEOUT_MS, 600_000 if unset)
  */
 export async function apiFetch(
   endpoint: string,
