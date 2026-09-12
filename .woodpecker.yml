@@ -26,3 +26,15 @@ steps:
     image: docker:29-cli
     commands:
       - docker build --tag resume-matcher-ci:${CI_COMMIT_SHA} .
+
+  deploy:
+    image: docker:29-cli
+    # Production settings stay on this PC. This trusted repository gets a
+    # read-only mount only for the deploy step; they are never committed.
+    volumes:
+      - /home/sam/Resume-Matcher/.env:/run/secrets/resume-matcher.env:ro
+    commands:
+      - docker compose --project-name resume-matcher --env-file /run/secrets/resume-matcher.env up -d --build --remove-orphans
+    when:
+      - event: push
+        branch: main
