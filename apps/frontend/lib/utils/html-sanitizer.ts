@@ -3,16 +3,18 @@ import DOMPurify from 'isomorphic-dompurify';
 /**
  * Whitelist of allowed HTML tags for rich text content
  */
-const ALLOWED_TAGS = ['strong', 'em', 'u', 'a'];
+const ALLOWED_TAGS = ['strong', 'em', 'u', 'a', 'span'];
 
 /**
  * Whitelist of allowed HTML attributes
  */
-const ALLOWED_ATTR = ['href', 'target', 'rel'];
+const ALLOWED_ATTR = ['href', 'target', 'rel', 'data-review'];
 
 /**
  * Sanitizes HTML content using DOMPurify with a strict whitelist.
- * Only allows bold, italic, underline, and link formatting.
+ * Only allows bold, italic, underline, link and red-review formatting.
+ * Note: `style` is deliberately NOT allowed - red review text is a
+ * `<span data-review="red">` coloured by CSS, never an inline style.
  * Uses isomorphic-dompurify which works in both browser and Node.js.
  *
  * @param dirty - The unsanitized HTML string

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Editor } from '@tiptap/react';
-import { Bold, Italic, Underline, Link } from 'lucide-react';
+import { Bold, Italic, Underline, Link, Highlighter } from 'lucide-react';
 import { Button } from './button';
 import { cn } from '@/lib/utils';
 
@@ -14,7 +14,7 @@ interface RichTextToolbarProps {
 /**
  * Rich Text Toolbar Component
  *
- * Swiss International Style formatting toolbar with B/I/U/Link buttons.
+ * Swiss International Style formatting toolbar with B/I/U/Red/Link buttons.
  * Active states shown with Hyper Blue background.
  */
 export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ editor, onLinkClick }) => {
@@ -39,6 +39,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({ editor, onLink
       action: () => editor.chain().focus().toggleUnderline().run(),
       isActive: editor.isActive('underline'),
       shortcut: 'Ctrl+U',
+    },
+    {
+      icon: Highlighter,
+      label: 'Red review text',
+      action: () => editor.chain().focus().toggleRedText().run(),
+      isActive: editor.isActive('redText'),
+      shortcut: 'Ctrl+Shift+R',
     },
     {
       icon: Link,

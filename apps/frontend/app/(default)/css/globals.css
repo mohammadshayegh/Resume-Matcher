@@ -233,6 +233,15 @@
   page-break-before: avoid;
 }
 
+/* Red review text (rich-text editor "Red review text" mark).
+   ATS-safe: colour only - the extracted text layer is unchanged. */
+[data-review='red'] {
+  color: #dc2626;
+  /* Keep the colour in the Chromium-generated PDF */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
 /* Generic no-break class for any element */
 .resume-body [data-no-break] {
   break-inside: avoid;

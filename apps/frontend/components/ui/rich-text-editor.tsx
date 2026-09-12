@@ -5,6 +5,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Underline from '@tiptap/extension-underline';
+import { RedText } from './extensions/red-text';
 import { RichTextToolbar } from './rich-text-toolbar';
 import { LinkDialog } from './link-dialog';
 import { cn } from '@/lib/utils';
@@ -26,7 +27,7 @@ interface RichTextEditorProps {
  * Rich Text Editor Component
  *
  * Swiss International Style WYSIWYG editor with formatting toolbar.
- * Supports bold, italic, underline, and links.
+ * Supports bold, italic, underline, red review text, and links.
  *
  * Uses Tiptap (ProseMirror) under the hood for reliable editing.
  */
@@ -61,6 +62,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
         underline: false,
       }),
       Underline,
+      RedText,
       Link.configure({
         openOnClick: false,
         HTMLAttributes: {
