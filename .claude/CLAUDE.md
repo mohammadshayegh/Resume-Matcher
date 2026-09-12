@@ -121,6 +121,7 @@ apps/
 | i18n | [i18n.md](../docs/agent/features/i18n.md) |
 | AI enrichment | [enrichment.md](../docs/agent/features/enrichment.md) |
 | JD matching | [jd-match.md](../docs/agent/features/jd-match.md) |
+| Tailoring intensity | [tailoring-intensity.md](../docs/agent/features/tailoring-intensity.md) — nudge / keywords / full / full_pro strategy registries |
 
 ---
 

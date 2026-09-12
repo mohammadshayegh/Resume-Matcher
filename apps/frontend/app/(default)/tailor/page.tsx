@@ -545,6 +545,11 @@ export default function TailorPage() {
                       label: t('tailor.promptOptions.full.label'),
                       description: t('tailor.promptOptions.full.description'),
                     },
+                    {
+                      id: 'full_pro',
+                      label: t('tailor.promptOptions.full_pro.label'),
+                      description: t('tailor.promptOptions.full_pro.description'),
+                    },
                   ]
             }
             value={selectedPromptId}

@@ -215,6 +215,21 @@ def _build_truthfulness_rules(rule_7: str) -> str:
     return CRITICAL_TRUTHFULNESS_RULES_TEMPLATE.format(rule_7=rule_7)
 
 
+PRO_TRUTHFULNESS_RULES = """CRITICAL TRUTHFULNESS RULES - NEVER VIOLATE:
+1. You MAY add a skill or technology that the job description requires, but ONLY when the candidate's existing resume content shows plausible hands-on exposure to it. Never claim a tool the resume gives no basis for.
+2. DO NOT invent numeric achievements (e.g., "increased by 30%"). New bullet points must be qualitative unless the number already exists in the original resume.
+3. DO NOT add company names, employers, clients, or product names not in the original
+4. DO NOT upgrade experience level (e.g., "Junior" -> "Senior") or job titles
+5. DO NOT add certifications, degrees, or credentials - these are verifiable and must stay untouched
+6. DO NOT extend employment dates or change timelines. Copy date ranges exactly as they appear, including months.
+7. You MAY add new bullet points that express job-description responsibilities the candidate's existing roles credibly covered. Anchor every new bullet in work the resume already evidences - do not invent an entirely new job function.
+8. Every added bullet or skill is surfaced to the candidate for review before it is saved. Add only what the candidate could truthfully defend in an interview.
+9. NEVER remove existing skills, certifications, languages, or awards. You may reorder by relevance, but every original item must remain.
+
+Violation of these rules could cause serious problems for the candidate in job interviews.
+"""
+
+
 CRITICAL_TRUTHFULNESS_RULES = {
     "nudge": _build_truthfulness_rules(
         "DO NOT add new bullet points or content - only rephrase existing content"
@@ -225,6 +240,7 @@ CRITICAL_TRUTHFULNESS_RULES = {
     "full": _build_truthfulness_rules(
         "You may expand existing bullet points or add new ones that elaborate on existing work, but DO NOT invent entirely new responsibilities"
     ),
+    "full_pro": PRO_TRUTHFULNESS_RULES,
 }
 
 IMPROVE_RESUME_PROMPT_NUDGE = """Lightly nudge this resume toward the job description. Output ONLY the JSON object, no other text.
@@ -321,6 +337,40 @@ Original Resume:
 Output in this JSON format:
 {schema}"""
 
+IMPROVE_RESUME_PROMPT_FULL_PRO = """Aggressively tailor this resume so it covers the job description as completely as the candidate's real experience allows. Output ONLY the JSON object, no other text.
+
+{critical_truthfulness_rules}
+
+IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
+Do NOT include personalInfo in your output - it will be preserved from the original resume.
+
+Goal: maximize job-description coverage. Work through every required skill, preferred skill, and key responsibility in the job description and make sure the resume speaks to it wherever the candidate's real background supports it.
+
+Rules:
+- Rewrite the summary so it directly answers the job description's headline requirements
+- Rewrite existing bullet points in the job description's terminology while preserving the candidate's actual accomplishment
+- ADD new bullet points to existing roles and projects for job-description responsibilities the candidate's experience credibly covered but the resume never spelled out. Keep new bullets qualitative - never attach an invented metric.
+- ADD job-description skills to additional.technicalSkills when the resume content shows plausible exposure to them
+- Do NOT add new work entries, education entries, projects, employers, or certifications
+- Keep proper nouns (names, company names, locations) unchanged
+- Preserve descriptionStyles arrays and keep them aligned one-to-one with description arrays. A new bullet gets a "bullet" style.
+- For customSections: preserve exact structure, item count, titles, subtitles, and years. If an item's description is an empty array [] in the original, keep it empty []. Do NOT generate descriptions for items that had none.
+- Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
+- Keep each role to a readable length: prefer strengthening existing bullets over stacking many new ones
+- Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
+
+Job Description:
+{job_description}
+
+Keywords to cover:
+{job_keywords}
+
+Original Resume:
+{original_resume}
+
+Output in this JSON format:
+{schema}"""
+
 IMPROVE_PROMPT_OPTIONS = [
     {
         "id": "nudge",
@@ -337,12 +387,18 @@ IMPROVE_PROMPT_OPTIONS = [
         "label": "Full tailor",
         "description": "Comprehensive tailoring using the job description.",
     },
+    {
+        "id": "full_pro",
+        "label": "Full tailor Pro",
+        "description": "Maximum coverage: rewrites bullets, adds new job-aligned bullets and skills for your review.",
+    },
 ]
 
 IMPROVE_RESUME_PROMPTS = {
     "nudge": IMPROVE_RESUME_PROMPT_NUDGE,
     "keywords": IMPROVE_RESUME_PROMPT_KEYWORDS,
     "full": IMPROVE_RESUME_PROMPT_FULL,
+    "full_pro": IMPROVE_RESUME_PROMPT_FULL_PRO,
 }
 
 DEFAULT_IMPROVE_PROMPT_ID = "keywords"
@@ -475,7 +531,48 @@ DIFF_STRATEGY_INSTRUCTIONS = {
     "nudge": "Make minimal edits. Only rephrase where there is a clear match. Do not add new bullet points.",
     "keywords": "Weave in relevant keywords where evidence already exists. You may rephrase bullets but do not add new ones.",
     "full": "Make targeted adjustments. You may rephrase bullets, add verified JD skills, and add new bullets that elaborate on existing work, but do not invent new responsibilities.",
+    "full_pro": (
+        "Maximize job-description coverage. Rewrite bullets into the JD's terminology, "
+        "add every verified skill target that is missing from the skills list, and append "
+        "new bullets for JD responsibilities the candidate's existing roles credibly covered. "
+        "Anchor every new bullet in work the resume already evidences and keep it qualitative - "
+        "never attach an invented metric or a responsibility the candidate never held."
+    ),
 }
+
+# Coverage block appended after the numbered diff rules. It states, per strategy,
+# how rules 9 and 11 (minimal edits, no new content) apply so the model is never
+# left resolving a silent contradiction between the rules and the strategy.
+DIFF_COVERAGE_INSTRUCTIONS = {
+    "nudge": "Apply rules 9 and 11 exactly as written: keep changes minimal and targeted, and never add new content.",
+    "keywords": "Apply rules 9 and 11 exactly as written: keep changes minimal and targeted, and never add new content.",
+    "full": "Apply rules 9 and 11 exactly as written: keep changes minimal and targeted, and never add new content.",
+    "full_pro": (
+        "PRO MODE - these directions take precedence over rules 9 and 11 where they conflict:\n"
+        "- The goal is a resume that covers the job description as completely as the candidate's real experience allows. Broad coverage beats minimal edits.\n"
+        "- Walk the job description's required skills, preferred skills, and key responsibilities one by one. For each, either reframe existing content to demonstrate it, or emit an \"append\" change adding a new bullet to the role or project where that work actually happened.\n"
+        "- Emit an \"add_skill\" change for every verified skill target that is missing from additional.technicalSkills.\n"
+        "- A new bullet must describe work the candidate's listed roles credibly involved. Do not invent employers, projects, responsibilities the candidate never held, or any metric (rules 2 and 3 still bind absolutely).\n"
+        "- Add at most 2 new bullets per role or project, so each entry stays readable.\n"
+        "- Every added bullet and skill is shown to the candidate for review before it is saved."
+    ),
+}
+
+DEFAULT_DIFF_COVERAGE_INSTRUCTION = DIFF_COVERAGE_INSTRUCTIONS["keywords"]
+
+# Per-strategy guidance for the skill-target planning pass.
+SKILL_PLAN_COVERAGE_INSTRUCTIONS = {
+    "nudge": "Prefer skills the resume already evidences. Keep the list short and conservative.",
+    "keywords": "Prefer skills the resume already evidences. Keep the list short and conservative.",
+    "full": "Prefer skills the resume already evidences. Keep the list short and conservative.",
+    "full_pro": (
+        "Be exhaustive: list EVERY required and preferred JD skill, including the ones missing "
+        "from the resume skills list, plus existing resume skills relevant to the JD. The goal "
+        "is full job-description skill coverage for the candidate to review."
+    ),
+}
+
+DEFAULT_SKILL_PLAN_COVERAGE_INSTRUCTION = SKILL_PLAN_COVERAGE_INSTRUCTIONS["keywords"]
 
 SKILL_TARGET_PLAN_PROMPT = """Build a concise skill target plan for tailoring this resume to the job.
 
@@ -488,6 +585,7 @@ Rules:
 4. Do not include skills unrelated to the JD.
 5. Do not include certifications.
 6. Generate reasons in {output_language}.
+7. {coverage_instruction}
 
 Existing resume skills:
 {existing_skills}
@@ -527,6 +625,9 @@ RULES:
 10. Exception to rule 2: you may add a skill only if it appears in the verified skill targets below
 11. By DEFAULT, scan the summary and every work, project, and education description for content that already demonstrates a job-description keyword or skill, and reframe that text using the job description's terminology where it is not already phrased that way (per rule 9, leave content that already aligns well), while preserving the candidate's actual accomplishment. Do NOT add new work, metrics, or responsibilities; only restate existing content in the JD's language, and verify every reframe stays factually accurate.
 12. Preserve original capitalization, especially for proper nouns, technical terms (e.g., REST, API, AWS), and acronyms. Do not change the casing of words that were capitalized in the original.
+
+COVERAGE:
+{coverage_instruction}
 
 PATHS you can target:
 - "summary" — the resume summary text

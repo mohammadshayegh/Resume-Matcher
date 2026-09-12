@@ -612,6 +612,10 @@
       "full": {
         "label": "Full tailor",
         "description": "Comprehensive tailoring using the job description."
+      },
+      "full_pro": {
+        "label": "Full tailor Pro",
+        "description": "Maximum coverage: rewrites bullets, adds new job-aligned bullets and skills for your review."
       }
     },
     "analyzeJob": "Analyze Job",

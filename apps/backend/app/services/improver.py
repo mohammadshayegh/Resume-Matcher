@@ -11,11 +11,15 @@ from typing import Any, Callable
 from app.llm import complete_json
 from app.prompts import (
     CRITICAL_TRUTHFULNESS_RULES,
+    DEFAULT_DIFF_COVERAGE_INSTRUCTION,
     DEFAULT_IMPROVE_PROMPT_ID,
+    DEFAULT_SKILL_PLAN_COVERAGE_INSTRUCTION,
+    DIFF_COVERAGE_INSTRUCTIONS,
     DIFF_IMPROVE_PROMPT,
     DIFF_STRATEGY_INSTRUCTIONS,
     EXTRACT_KEYWORDS_PROMPT,
     IMPROVE_RESUME_PROMPTS,
+    SKILL_PLAN_COVERAGE_INSTRUCTIONS,
     SKILL_TARGET_PLAN_PROMPT,
     get_language_name,
 )
@@ -25,6 +29,12 @@ from app.schemas.models import ImproveDiffResult, ResumeChange
 from app.services.parser import has_meaningful_resume_content
 
 logger = logging.getLogger(__name__)
+
+# Full-tailor Pro: the strategy that may append new bullets and add JD skills.
+PRO_PROMPT_ID = "full_pro"
+# Pro asks for full JD coverage, so its diff list is far longer than the other
+# strategies'. A 4096-token cap truncates the JSON and loses the whole pass.
+PRO_DIFF_MAX_TOKENS = 8192
 
 # LLM-011: Prompt injection patterns to sanitize
 _INJECTION_PATTERNS = [
@@ -587,7 +597,7 @@ async def generate_resume_diffs(
         job_description: Target job description
         job_keywords: Extracted job keywords
         language: Output language code (en, es, zh, ja)
-        prompt_id: Strategy id (nudge/keywords/full)
+        prompt_id: Strategy id (nudge/keywords/full/full_pro)
         original_resume_data: Structured resume JSON
         skill_targets: Verified skill targets from the planning pass
 
@@ -606,6 +616,9 @@ async def generate_resume_diffs(
     strategy_instruction = DIFF_STRATEGY_INSTRUCTIONS.get(
         selected_id, DIFF_STRATEGY_INSTRUCTIONS[DEFAULT_IMPROVE_PROMPT_ID]
     )
+    coverage_instruction = DIFF_COVERAGE_INSTRUCTIONS.get(
+        selected_id, DEFAULT_DIFF_COVERAGE_INSTRUCTION
+    )
 
     # LLM-011: Sanitize job description
     sanitized_jd = _sanitize_user_input(job_description)
@@ -621,6 +634,7 @@ async def generate_resume_diffs(
 
     prompt = DIFF_IMPROVE_PROMPT.format(
         strategy_instruction=strategy_instruction,
+        coverage_instruction=coverage_instruction,
         output_language=output_language,
         job_keywords=keywords_str,
         skill_targets=_prepare_skill_targets_for_prompt(skill_targets),
@@ -631,7 +645,7 @@ async def generate_resume_diffs(
     result = await complete_json(
         prompt=prompt,
         system_prompt="You are an expert resume editor. Output only valid JSON with targeted changes.",
-        max_tokens=4096,
+        max_tokens=PRO_DIFF_MAX_TOKENS if selected_id == PRO_PROMPT_ID else 4096,
         schema_type="diff",
         response_validator=_validate_diff_result,
     )
@@ -881,15 +895,26 @@ async def generate_skill_target_plan(
     job_description: str,
     job_keywords: dict[str, Any],
     language: str = "en",
+    prompt_id: str | None = None,
 ) -> dict[str, Any]:
-    """Ask the LLM for a compact skill target plan before editing diffs."""
+    """Ask the LLM for a skill target plan before editing diffs.
+
+    ``prompt_id`` selects how exhaustive the plan should be: the Pro strategy
+    asks for every JD skill (including ones missing from the resume) so the
+    diff pass can offer full coverage for the user to review.
+    """
     output_language = get_language_name(language)
     existing_skills = original_resume_data.get("additional", {}).get(
         "technicalSkills", []
     )
     sanitized_jd = _sanitize_user_input(job_description)
+    coverage_instruction = SKILL_PLAN_COVERAGE_INSTRUCTIONS.get(
+        prompt_id or DEFAULT_IMPROVE_PROMPT_ID,
+        DEFAULT_SKILL_PLAN_COVERAGE_INSTRUCTION,
+    )
     prompt = SKILL_TARGET_PLAN_PROMPT.format(
         output_language=output_language,
+        coverage_instruction=coverage_instruction,
         existing_skills=json.dumps(existing_skills, ensure_ascii=False),
         job_keywords=_prepare_keywords_for_prompt(job_keywords),
         job_description=sanitized_jd,
@@ -942,7 +967,7 @@ async def improve_resume(
         job_description: Target job description
         job_keywords: Extracted job keywords
         language: Output language code (en, es, zh, ja)
-        prompt_id: Which tailor prompt to use
+        prompt_id: Which tailor prompt to use (nudge/keywords/full/full_pro)
         original_resume_data: Structured resume JSON; used instead of
             markdown when available for higher-fidelity LLM input
 

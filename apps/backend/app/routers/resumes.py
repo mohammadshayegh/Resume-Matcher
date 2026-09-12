@@ -1297,6 +1297,7 @@ async def _improve_preview_flow(
                 job_description=job["content"],
                 job_keywords=job_keywords,
                 language=language,
+                prompt_id=prompt_id,
             )
             verified_skill_plan = verify_skill_target_plan(
                 raw_skill_plan,
